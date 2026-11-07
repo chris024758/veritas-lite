@@ -55,7 +55,9 @@ other = start("Nobody On File")
 check("unknown subject session has no subject", requests.get(f"{API}/sessions/{other}").json()["subject_id"] is None)
 
 # POST /sessions/{id}/statements: the alibi
+before_calls = len(requests.get(f"{FAKE}/_requests").json())
 r = post_statement(session, ALIBI)
+alibi_calls = len(requests.get(f"{FAKE}/_requests").json()) - before_calls
 body = r.json()
 print(json.dumps([{k: c[k] for k in ("claim_type", "status", "reason", "text")} | {"tools": tools_used(c)}
                   for c in body["claims"]], indent=1, ensure_ascii=False))
@@ -71,6 +73,8 @@ check("Hadapsar leg is not flagged", leg["status"] == "CONSISTENT", leg["reason"
 home = next(c for c in body["claims"] if c["entities"].get("time") == "9:50")
 check("home-by-9:50 cross-ref CONFLICT from witness record", home["status"] == "CONFLICT" and "witness_statement" in home["reason"], home["reason"])
 check("every alibi claim has a reason", all(c["reason"] for c in body["claims"]))
+check("alibi costs at most 5 Gemini calls in total", alibi_calls <= 5, f"{alibi_calls} calls for 4 claims")
+check("each claim keeps only the tool calls it cited", [c["name"] for c in route["details"]["tool_calls"]] == ["search_case_file", "check_route"])
 
 # Unrelated statement: other places and people, using web_search and generate_image
 r = post_statement(session, UNRELATED)
@@ -155,7 +159,7 @@ check("GET unknown session 404", requests.get(f"{API}/sessions/999999").status_c
 seen = requests.get(f"{FAKE}/_requests").json()
 verification_calls = [q for q in seen if any("functionDeclarations" in t for t in q["body"].get("tools", []))]
 names = {d["name"] for t in verification_calls[0]["body"]["tools"] for d in t["functionDeclarations"]}
-check("all four tools bound on every verification call", len(verification_calls) > 10, f"{len(verification_calls)} calls, tools {sorted(names)}")
+check("all four tools bound on every verification call", len(verification_calls) > 5, f"{len(verification_calls)} calls, tools {sorted(names)}")
 check("grounding request used googleSearch", any("googleSearch" in t for q in seen for t in q["body"].get("tools", [])))
 check("image request used the image model", any("image" in q["model"] for q in seen))
 print(f"\nPASS test_06_api: {passed} checks (Gemini decisions scripted)")

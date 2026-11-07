@@ -1,5 +1,5 @@
-"""Per-claim Gemini tool-calling loop. All four tools are bound on every call and the model
-chooses among them; there is no routing on claim_type."""
+"""Gemini tool-calling loop over all of one statement's claims at once. All four tools are
+bound on every call and the model chooses among them; there is no routing on claim_type."""
 import json
 import re
 
@@ -13,7 +13,9 @@ from tools.image_gen import generate_image
 from tools.routing import check_route
 from tools.web_search import web_search
 
-MAX_TOOL_ROUNDS = 5
+# Calls with tools enabled. One more tools-off call may follow to force the verdicts, so a
+# statement costs at most MAX_TOOL_ROUNDS + 1 verification calls, whatever its claim count.
+MAX_TOOL_ROUNDS = 3
 
 TOOL_DECLARATIONS = [
     types.FunctionDeclaration(
@@ -79,9 +81,9 @@ TOOL_DECLARATIONS = [
 ]
 
 # Must stay generic: the case details arrive through tools, not through this prompt.
-SYSTEM_PROMPT = """You verify one claim from a person's statement in an investigation, using tools. Choose for yourself which tools the claim needs, if any, and call as many as are useful. Base the verdict only on what tools return, never on your own knowledge of places, travel times, or people.
+SYSTEM_PROMPT = """You verify the numbered claims from one person's statement in an investigation, using tools, and give a verdict for every claim. Choose for yourself which tools each claim needs, if any. You have only a few rounds of tool use, so in each round request every tool call you need at once: you can call several tools, and the same tool several times, in one turn. One result can inform several claims. Base verdicts only on what tools return, never on your own knowledge of places, travel times, or people.
 
-Look for anything in the records that bears on the claim, including records that do not mention it directly. For a claim about where someone was at a time, compare it with any record of a matching person or vehicle at another place around or after that time. If a claim uses a vague place, find out what it refers to from the case records, and use the rest of the statement and the case location to make place names specific enough for a route lookup.
+Look for anything in the records that bears on each claim, including records that do not mention it directly. For a claim about where someone was at a time, compare it with any record of a matching person or vehicle at another place around or after that time. If a claim uses a vague place, find out what it refers to from the case records, and use the rest of the statement and the case location to make place names specific enough for a route lookup.
 
 Verdicts:
 - CONSISTENT: tool results support the claim and nothing contradicts it.
@@ -89,16 +91,26 @@ Verdicts:
 - CONFLICT: a record directly contradicts the claim.
 - PENDING: the tools could not establish anything either way, for example nothing relevant was found.
 
-When a route check informed the verdict, the reason must state actual_minutes and claimed_minutes, and mention the assumed speed if the result used one. When a record informed it, name that record and what it says. Do not treat a failed tool as evidence.
+When a route check informed a verdict, the reason must state actual_minutes and claimed_minutes, and mention the assumed speed if the result used one. When a record informed it, name that record and what it says. Do not treat a failed tool as evidence.
 
-When you are finished, reply with only a JSON object: {"status": "<verdict>", "reason": "<one or two sentences>"}"""
+Every tool result carries a call_id. When you are finished, reply with only a JSON object holding one verdict per claim, listing the call_ids of the results that verdict relied on:
+{"verdicts": [{"claim": <claim number>, "status": "<verdict>", "reason": "<one or two sentences>", "evidence_calls": [<call_id>, ...]}]}"""
 
-VERDICT_REMINDER = 'Give your verdict now as JSON only: {"status": "...", "reason": "..."}'
+VERDICT_REMINDER = (
+    'Give your verdicts now as JSON only: {"verdicts": [{"claim": <claim number>, '
+    '"status": "...", "reason": "...", "evidence_calls": [<call_id>, ...]}]}'
+)
 
 
 class Verdict(BaseModel):
+    claim: int
     status: str
     reason: str
+    evidence_calls: list[int] = []
+
+
+class Verdicts(BaseModel):
+    verdicts: list[Verdict]
 
 
 def _dispatch(name: str, args: dict, case_id: str, statement_id: int) -> dict:
@@ -117,32 +129,45 @@ def _dispatch(name: str, args: dict, case_id: str, statement_id: int) -> dict:
     return {"error": f"unknown tool {name}"}
 
 
-def _parse_verdict(text: str | None) -> Verdict | None:
+def _parse_verdicts(text: str | None) -> dict[int, Verdict] | None:
+    """Verdicts keyed by claim number, or None if the reply is not usable at all."""
     match = re.search(r"\{.*\}", text or "", re.DOTALL)
     if not match:
         return None
     try:
-        verdict = Verdict.model_validate_json(match.group(0))
+        parsed = Verdicts.model_validate_json(match.group(0))
     except ValueError:
         return None
-    verdict.status = verdict.status.strip().upper()
-    return verdict if verdict.status in db.VALID_STATUSES else None
+    verdicts = {}
+    for verdict in parsed.verdicts:
+        verdict.status = verdict.status.strip().upper()
+        if verdict.status in db.VALID_STATUSES:
+            verdicts[verdict.claim] = verdict
+    return verdicts
 
 
-def _user_prompt(claim: dict, statement: str, case_id: str, speaker: str) -> str:
+def _user_prompt(claims: list[dict], statement: str, case_id: str, speaker: str) -> str:
+    lines = [
+        f"[{number}] ({claim['claim_type']}) {claim['text']} | entities: "
+        f"{json.dumps(claim['entities'], ensure_ascii=False)}"
+        for number, claim in enumerate(claims, start=1)
+    ]
     return (
         f"Case ID: {case_id}\n"
         f"Speaker: {speaker}\n"
         f"Full statement: {statement}\n"
-        f"Claim to verify ({claim['claim_type']}): {claim['text']}\n"
-        f"Extracted entities: {json.dumps(claim['entities'], ensure_ascii=False)}"
+        f"Claims to verify:\n" + "\n".join(lines)
     )
 
 
-def verify_claim(claim: dict, statement: str, statement_id: int, case_id: str, speaker: str) -> dict:
-    """Returns {status, reason, details}. A Gemini failure leaves the claim PENDING."""
+def verify_statement(claims: list[dict], statement: str, statement_id: int, case_id: str, speaker: str) -> list[dict]:
+    """One {status, reason, details} per claim, in order. A Gemini failure leaves every claim
+    PENDING; a claim the model gives no verdict for is PENDING on its own."""
+    if not claims:
+        return []
     tool_calls = []
-    contents = [types.Content(role="user", parts=[types.Part(text=_user_prompt(claim, statement, case_id, speaker))])]
+    contents = [types.Content(role="user", parts=[types.Part(text=_user_prompt(claims, statement, case_id, speaker))])]
+    model_calls = 0
 
     def config(allow_tools: bool) -> types.GenerateContentConfig:
         return types.GenerateContentConfig(
@@ -155,13 +180,16 @@ def verify_claim(claim: dict, statement: str, statement_id: int, case_id: str, s
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         )
 
-    def result(status: str, reason: str) -> dict:
-        return {"status": status, "reason": reason, "details": {"tool_calls": tool_calls}}
+    def outcome(status: str, reason: str, evidence_calls: list[int]) -> dict:
+        cited = [call for call in tool_calls if call["id"] in evidence_calls]
+        details = {"tool_calls": cited, "statement_tool_calls": len(tool_calls), "statement_model_calls": model_calls}
+        return {"status": status, "reason": reason, "details": details}
 
     try:
         response = None
         for _ in range(MAX_TOOL_ROUNDS):
             response = gemini_client.generate(gemini_client.MODEL, contents, config(True))
+            model_calls += 1
             calls = response.function_calls or []
             if not calls:
                 break
@@ -170,21 +198,31 @@ def verify_claim(claim: dict, statement: str, statement_id: int, case_id: str, s
             for call in calls:
                 args = dict(call.args or {})
                 output = _dispatch(call.name, args, case_id, statement_id)
-                tool_calls.append({"name": call.name, "args": args, "result": output})
-                parts.append(types.Part.from_function_response(name=call.name, response={"result": output}))
+                call_id = len(tool_calls) + 1
+                tool_calls.append({"id": call_id, "name": call.name, "args": args, "result": output})
+                parts.append(types.Part.from_function_response(
+                    name=call.name, response={"call_id": call_id, "result": output}))
             contents.append(types.Content(role="user", parts=parts))
         else:
-            response = None  # ran out of rounds on a tool call: ask for the verdict below
+            response = None  # ran out of rounds on a tool call: ask for the verdicts below
 
-        verdict = _parse_verdict(response.text) if response is not None else None
-        if verdict is None:
+        verdicts = _parse_verdicts(response.text) if response is not None else None
+        if verdicts is None:
             if response is not None and response.candidates and response.candidates[0].content:
                 contents.append(response.candidates[0].content)
             contents.append(types.Content(role="user", parts=[types.Part(text=VERDICT_REMINDER)]))
-            verdict = _parse_verdict(gemini_client.generate(gemini_client.MODEL, contents, config(False)).text)
+            verdicts = _parse_verdicts(gemini_client.generate(gemini_client.MODEL, contents, config(False)).text)
+            model_calls += 1
     except (errors.APIError, gemini_client.GeminiNotConfigured, ValueError) as exc:
-        return result("PENDING", f"Verification did not complete: {exc}")
+        return [outcome("PENDING", f"Verification did not complete: {exc}", []) for _ in claims]
 
-    if verdict is None:
-        return result("PENDING", "The model did not return a usable verdict.")
-    return result(verdict.status, verdict.reason)
+    if verdicts is None:
+        return [outcome("PENDING", "The model did not return usable verdicts.", []) for _ in claims]
+    results = []
+    for number in range(1, len(claims) + 1):
+        verdict = verdicts.get(number)
+        if verdict is None:
+            results.append(outcome("PENDING", "The model gave no verdict for this claim.", []))
+        else:
+            results.append(outcome(verdict.status, verdict.reason, verdict.evidence_calls))
+    return results

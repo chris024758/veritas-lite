@@ -61,10 +61,12 @@ def run_pipeline(session: dict, text: str) -> dict:
         raise HTTPException(502, f"claim extraction failed: {exc}")
 
     statement = db.add_statement(session["id"], text)
-    speaker = _speaker(session)
-    for claim in claims:
-        claim_id = db.add_claim(statement["id"], claim["claim_type"], claim["text"], claim["entities"])
-        outcome = verification.verify_claim(claim, text, statement["id"], session["case_id"], speaker)
+    claim_ids = [
+        db.add_claim(statement["id"], claim["claim_type"], claim["text"], claim["entities"])
+        for claim in claims
+    ]
+    outcomes = verification.verify_statement(claims, text, statement["id"], session["case_id"], _speaker(session))
+    for claim_id, outcome in zip(claim_ids, outcomes):
         db.finish_claim(claim_id, outcome["status"], outcome["reason"], outcome["details"])
     return {**statement, "claims": db.get_claims(statement["id"])}
 

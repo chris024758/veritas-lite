@@ -181,29 +181,57 @@ def _verification(body: dict) -> JSONResponse:
     prompt = contents[0]["parts"][0]["text"]
     case_id = re.search(r"Case ID: (.*)", prompt).group(1)
     speaker = re.search(r"Speaker: (.*)", prompt).group(1)
-    claim_type, claim_text = re.search(r"Claim to verify \((\w+)\): (.*)", prompt).groups()
-    entities = json.loads(re.search(r"Extracted entities: (.*)", prompt).group(1))
-
-    if "TRIGGER_VERIFY_400" in claim_text:
+    claims = {
+        int(number): (claim_type, text, json.loads(entities))
+        for number, claim_type, text, entities in re.findall(
+            r"^\[(\d+)\] \((\w+)\) (.*?) \| entities: (\{.*\})$", prompt, re.MULTILINE)
+    }
+    if not claims:
+        return _error(400, "INVALID_ARGUMENT", "no numbered claims in the prompt")
+    if any("TRIGGER_VERIFY_400" in text for _, text, _ in claims.values()):
         return _error(400, "INVALID_ARGUMENT", "scripted verification failure")
-    mode = body.get("toolConfig", {}).get("functionCallingConfig", {}).get("mode")
-    if "TRIGGER_PROSE" in claim_text:
-        if mode == "NONE":
-            return _ok([{"text": json.dumps({"status": "PENDING", "reason": "Verdict from the tools-off retry."})}])
-        return _ok([{"text": "It looks fine to me."}])
-    if "TRIGGER_BAD_ARGS" in claim_text and not results:
-        return _ok([{"functionCall": {"name": "check_route", "args": {"origin": "only origin"[:0]}}}])
-    if "TRIGGER_UNKNOWN_TOOL" in claim_text and not results:
-        return _ok([{"functionCall": {"name": "delete_everything", "args": {}}}])
-    if "TRIGGER_BAD_ARGS" in claim_text or "TRIGGER_UNKNOWN_TOOL" in claim_text:
-        return _ok([{"text": json.dumps({"status": "PENDING", "reason": f"Tool said: {results[0]['error']}"})}])
 
-    step = _plan(claim_type, claim_text, entities, case_id, speaker, results)
-    if "verdict" in step:
-        status, reason = step["verdict"]
-        return _ok([{"text": json.dumps({"status": status, "reason": reason})}])
-    name, args = step["call"]
-    return _ok([{"functionCall": {"name": name, "args": args}}])
+    def step(number: int, results: list) -> dict:
+        claim_type, text, entities = claims[number]
+        for trigger, call in (("TRIGGER_BAD_ARGS", ("check_route", {})),
+                              ("TRIGGER_UNKNOWN_TOOL", ("delete_everything", {}))):
+            if trigger in text:
+                return {"call": call} if not results else {"verdict": ("PENDING", f"Tool said: {results[0]['error']}")}
+        return _plan(claim_type, text, entities, case_id, speaker, results)
+
+    # Replay the conversation: each round, every unfinished claim made one call, in claim order.
+    results = {number: [] for number in claims}
+    cited = {number: [] for number in claims}
+    turns = [t for t in contents if any("functionCall" in p for p in t["parts"])]
+    answer_turns = [t for t in contents if any("functionResponse" in p for p in t["parts"])]
+    for answers in answer_turns[:len(turns)]:
+        waiting = [n for n in sorted(claims) if "call" in step(n, results[n])]
+        responses = [p["functionResponse"]["response"] for p in answers["parts"] if "functionResponse" in p]
+        if len(responses) != len(waiting):
+            return _error(400, "INVALID_ARGUMENT", "replay mismatch")
+        for number, response in zip(waiting, responses):
+            results[number].append(response["result"])
+            cited[number].append(response["call_id"])
+
+    mode = body.get("toolConfig", {}).get("functionCallingConfig", {}).get("mode")
+    prose = [n for n, (_, text, _) in claims.items() if "TRIGGER_PROSE" in text]
+    if prose and mode != "NONE":
+        return _ok([{"text": "It all looks fine to me."}])
+
+    steps = {n: step(n, results[n]) for n in sorted(claims)}
+    if mode != "NONE" and not prose:
+        calls = [{"functionCall": {"name": s["call"][0], "args": s["call"][1]}} for s in steps.values() if "call" in s]
+        if calls:
+            return _ok(calls)
+
+    verdicts = []
+    for number, s in steps.items():
+        if number in prose:
+            status, reason = "PENDING", "Verdict from the tools-off retry."
+        else:
+            status, reason = s.get("verdict", ("PENDING", "Ran out of tool rounds."))
+        verdicts.append({"claim": number, "status": status, "reason": reason, "evidence_calls": cited[number]})
+    return _ok([{"text": json.dumps({"verdicts": verdicts})}])
 
 
 @app.post("/{version}/models/{model}:generateContent")
