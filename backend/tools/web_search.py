@@ -1,26 +1,25 @@
-"""web_search: Gemini's native Google Search grounding, behind a function tool.
+"""Small resilient web-search tool; it never turns a verification failure into a 500."""
+from urllib.parse import quote_plus
 
-Gemini is bound with function tools on the verification call, so grounding runs as its
-own Gemini call here and the model sees an ordinary function result."""
-from google.genai import errors, types
-
-import gemini_client
+import requests
+from langchain_core.tools import tool
 
 
+@tool
 def web_search(query: str) -> dict:
+    """Find public sources relevant to a factual query."""
     try:
-        response = gemini_client.generate(
-            gemini_client.MODEL,
-            f"Answer briefly from a web search, in at most three sentences: {query}",
-            types.GenerateContentConfig(tools=[types.Tool(google_search=types.GoogleSearch())]),
+        response = requests.get(
+            f"https://api.duckduckgo.com/?q={quote_plus(query)}&format=json&no_html=1",
+            timeout=10,
         )
-    except (errors.APIError, gemini_client.GeminiNotConfigured) as exc:
-        return {"query": query, "answer": None, "sources": [], "error": str(exc)}
-
-    sources = []
-    candidate = response.candidates[0] if response.candidates else None
-    metadata = candidate.grounding_metadata if candidate else None
-    for chunk in (metadata.grounding_chunks or []) if metadata else []:
-        if chunk.web:
-            sources.append({"title": chunk.web.title, "uri": chunk.web.uri})
-    return {"query": query, "answer": response.text, "sources": sources}
+        response.raise_for_status()
+        payload = response.json()
+        sources = [
+            {"title": item.get("Text", "Source"), "uri": item.get("FirstURL")}
+            for item in payload.get("RelatedTopics", [])[:3]
+            if isinstance(item, dict) and item.get("FirstURL")
+        ]
+        return {"query": query, "answer": payload.get("AbstractText") or None, "sources": sources}
+    except (requests.RequestException, ValueError) as exc:
+        return {"query": query, "answer": None, "sources": [], "error": f"web search failed: {exc}"}

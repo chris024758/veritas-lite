@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { API_URL } from "./api.js";
 
 const STATUS_ORDER = ["CONFLICT", "FLAGGED", "CONSISTENT", "PENDING"];
@@ -24,7 +25,7 @@ function RouteMetrics({ result }) {
 }
 
 function ToolTrace({ claim }) {
-  const calls = claim.details?.tool_calls ?? [];
+  const calls = claim.tool_calls ?? claim.details?.tool_calls ?? [];
   if (calls.length === 0) return null;
   const names = [...new Set(calls.map((call) => call.name))];
   const images = calls.filter((call) => call.result?.image_url);
@@ -62,6 +63,7 @@ function Tally({ claims }) {
 }
 
 export default function ClaimsTable({ claims }) {
+  const [expanded, setExpanded] = useState(new Set());
   if (claims.length === 0) {
     return <p className="muted empty">No claims yet. Submit a statement to check it.</p>;
   }
@@ -80,13 +82,21 @@ export default function ClaimsTable({ claims }) {
           </thead>
           <tbody>
             {claims.map((claim) => (
-              <tr key={claim.id} className={`row-${claim.status.toLowerCase()}`}>
+              <tr
+                key={claim.id}
+                className={`row-${claim.status.toLowerCase()} clickable`}
+                onClick={() => setExpanded((current) => {
+                  const next = new Set(current);
+                  next.has(claim.id) ? next.delete(claim.id) : next.add(claim.id);
+                  return next;
+                })}
+              >
                 <td>{claim.text}</td>
                 <td className="type">{claim.claim_type}</td>
                 <td><span className={`badge ${claim.status.toLowerCase()}`}>{claim.status}</span></td>
                 <td>
                   {claim.reason}
-                  <ToolTrace claim={claim} />
+                  {expanded.has(claim.id) && <ToolTrace claim={claim} />}
                 </td>
               </tr>
             ))}

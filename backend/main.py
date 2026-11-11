@@ -1,22 +1,30 @@
 """FastAPI backend. Run seed.py once first, then: uvicorn main:app --port 8018"""
 import os
 import tempfile
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from google.genai import errors
 from pydantic import BaseModel
 
 import db
 import extraction
-import gemini_client
+import groq_client
+import seed
 import stt
 import verification
 from tools.image_gen import OUTPUT_DIR
 
-app = FastAPI(title="VERITAS-Lite")
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    # A fresh checkout must be runnable without a manual seed command.
+    seed.seed()
+    yield
+
+
+app = FastAPI(title="VERITAS-Lite", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
@@ -44,6 +52,15 @@ def _speaker(session: dict) -> str:
     return "Unknown (not on the case file)"
 
 
+def _speaker_role(session: dict) -> str | None:
+    """Persist the formal speaker role separately from the display label."""
+    case = db.get_case(session["case_id"])
+    for subject in case["subjects"]:
+        if subject["id"] == session["subject_id"]:
+            return subject["role"]
+    return None
+
+
 def _require_session(session_id: int) -> dict:
     session = db.get_session_row(session_id)
     if session is None:
@@ -51,23 +68,23 @@ def _require_session(session_id: int) -> dict:
     return session
 
 
-def run_pipeline(session: dict, text: str) -> dict:
+def run_pipeline(session: dict, text: str, *, source: str = "text") -> dict:
     """Extract claims, then verify each with the tool-calling loop. Stores everything."""
     try:
         claims = extraction.extract_claims(text)
-    except gemini_client.GeminiNotConfigured as exc:
+    except groq_client.GroqNotConfigured as exc:
         raise HTTPException(503, str(exc))
-    except (errors.APIError, ValueError) as exc:
+    except ValueError as exc:
         raise HTTPException(502, f"claim extraction failed: {exc}")
 
-    statement = db.add_statement(session["id"], text)
+    statement = db.add_statement(session, text, source=source, role=_speaker_role(session))
     claim_ids = [
-        db.add_claim(statement["id"], claim["claim_type"], claim["text"], claim["entities"])
+        db.add_claim(statement["id"], session["case_id"], claim["claim_type"], claim["text"], claim["entities"])
         for claim in claims
     ]
     outcomes = verification.verify_statement(claims, text, statement["id"], session["case_id"], _speaker(session))
     for claim_id, outcome in zip(claim_ids, outcomes):
-        db.finish_claim(claim_id, outcome["status"], outcome["reason"], outcome["details"])
+        db.finish_claim(claim_id, outcome["status"], outcome["reason"], outcome["tool_calls"])
     return {**statement, "claims": db.get_claims(statement["id"])}
 
 
@@ -79,7 +96,7 @@ def start_session(body: StartSession):
 
 
 @app.post("/sessions/{session_id}/statements")
-def submit_statement(session_id: int, body: SubmitStatement):
+def submit_statement(session_id: str, body: SubmitStatement):
     session = _require_session(session_id)
     text = body.text.strip()
     if not text:
@@ -88,7 +105,7 @@ def submit_statement(session_id: int, body: SubmitStatement):
 
 
 @app.post("/sessions/{session_id}/audio")
-def submit_audio(session_id: int, audio: UploadFile):
+def submit_audio(session_id: str, audio: UploadFile):
     session = _require_session(session_id)
     suffix = Path(audio.filename or "").suffix or ".webm"
     handle, path = tempfile.mkstemp(suffix=suffix)
@@ -105,7 +122,7 @@ def submit_audio(session_id: int, audio: UploadFile):
     if not transcript:
         return {"transcript": "", "claims": []}
     try:
-        return {"transcript": transcript, **run_pipeline(session, transcript)}
+        return {"transcript": transcript, **run_pipeline(session, transcript, source="audio")}
     except HTTPException as exc:
         raise HTTPException(exc.status_code, f"{exc.detail} (transcript: {transcript})")
 
@@ -119,7 +136,7 @@ def get_case(case_id: str):
 
 
 @app.get("/sessions/{session_id}")
-def get_session(session_id: int):
+def get_session(session_id: str):
     history = db.get_session_history(session_id)
     if history is None:
         raise HTTPException(404, f"session {session_id} not found")

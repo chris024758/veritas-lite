@@ -193,6 +193,9 @@ textarea:focus { border-color: var(--primary); outline: none; }
 textarea:disabled { opacity: 0.6; }
 
 .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
+.speaker-picker { display: flex; align-items: center; gap: 8px; margin: -2px 0 12px; }
+.speaker-picker select { min-width: 210px; padding: 6px 8px; background: var(--surface-lowest); border: 1px solid var(--line-strong); border-radius: 6px; color: var(--text); font: inherit; }
+.speaker-picker select:disabled { opacity: 0.6; }
 button {
   display: inline-flex;
   align-items: center;
@@ -261,6 +264,7 @@ button.recording:hover:not(:disabled) { background: var(--bad-bg); }
 .claims td { padding: 10px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
 .claims tbody tr { transition: background-color 200ms ease-out; }
 .claims tbody tr:hover { background: var(--surface-mid); }
+.claims tbody tr.clickable { cursor: pointer; }
 .claims tbody tr:last-child td { border-bottom: 0; }
 .claims td:first-child { min-width: 200px; padding-left: 12px; box-shadow: inset 3px 0 0 var(--rail, transparent); }
 .claims td:last-child { min-width: 300px; color: var(--text-muted); }

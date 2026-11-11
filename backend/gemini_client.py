@@ -9,8 +9,8 @@ from google.genai import errors
 
 load_dotenv(Path(__file__).parent / ".env")
 
-MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
-IMAGE_MODEL = os.getenv("GEMINI_IMAGE_MODEL", "gemini-2.5-flash-image")
+MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+IMAGE_MODEL = os.getenv("GEMINI_IMAGE_MODEL", "gemini-2.0-flash-preview-image-generation")
 
 RETRYABLE_CODES = {429, 500, 503}
 MAX_ATTEMPTS = 4

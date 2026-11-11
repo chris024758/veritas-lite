@@ -2,7 +2,10 @@ fastapi>=0.115
 uvicorn[standard]>=0.30
 python-multipart>=0.0.9
 python-dotenv>=1.0
-google-genai>=1.30
+groq>=0.11
+langchain-core>=0.3
+langchain-groq>=0.2
+langgraph>=0.2
 requests>=2.32
 faster-whisper>=1.1
 # faster-whisper 1.2.1 passes an argument PyAV 19 removed

@@ -13,6 +13,7 @@ function MicIcon() {
 
 export default function InterviewPanel({ caseId, caseData }) {
   const [sessionId, setSessionId] = useState(null);
+  const [subjectName, setSubjectName] = useState("");
   const [text, setText] = useState("");
   const [statements, setStatements] = useState([]);
   const [busy, setBusy] = useState(null);
@@ -21,7 +22,9 @@ export default function InterviewPanel({ caseId, caseData }) {
   const [notice, setNotice] = useState(null);
   const recorderRef = useRef(null);
 
-  const subject = caseData?.subjects.find((s) => s.role === "Suspect") ?? caseData?.subjects[0];
+  const subject = caseData?.subjects.find((s) => s.full_name === subjectName)
+    ?? caseData?.subjects.find((s) => s.role?.toLowerCase() === "suspect")
+    ?? caseData?.subjects[0];
 
   async function ensureSession() {
     if (sessionId !== null) return sessionId;
@@ -107,6 +110,20 @@ export default function InterviewPanel({ caseId, caseData }) {
             </span>
           )}
         </div>
+
+        {caseData?.subjects?.length > 0 && (
+          <label className="speaker-picker">
+            <span className="eyebrow">Speaking subject</span>
+            <select
+              value={subjectName || subject.full_name}
+              onChange={(event) => setSubjectName(event.target.value)}
+              disabled={sessionId !== null || busy !== null}
+              aria-label="Speaking subject"
+            >
+              {caseData.subjects.map((item) => <option key={item.id} value={item.full_name}>{item.full_name} — {item.role}</option>)}
+            </select>
+          </label>
+        )}
 
         <h3 className="eyebrow">Transcript</h3>
         {statements.length === 0 ? (

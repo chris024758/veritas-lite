@@ -10,7 +10,7 @@ import db
 
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 OSRM_URL = "https://router.project-osrm.org/route/v1/driving/{a};{b}"
-HEADERS = {"User-Agent": "VERITAS-Lite-demo/0.1"}
+HEADERS = {"User-Agent": os.getenv("NOMINATIM_USER_AGENT", "VERITAS-Lite-demo/0.1")}
 TIMEOUT_SECONDS = 15
 NOMINATIM_INTERVAL_SECONDS = 1.1
 
