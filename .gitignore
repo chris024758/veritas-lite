@@ -6,3 +6,4 @@ backend/generated/
 node_modules/
 dist/
 .agent
+backend/uploads
