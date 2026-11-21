@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300"><defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#424769"/><stop offset="1" stop-color="#2d3250"/></linearGradient><linearGradient id="gold" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffe3a3"/><stop offset=".5" stop-color="#e8b04a"/><stop offset="1" stop-color="#a8741f"/></linearGradient><linearGradient id="steel" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#e6e8f2"/><stop offset="1" stop-color="#8c93c4"/></linearGradient></defs><rect width="400" height="300" fill="url(#bg)"/>
+<rect x="120" y="30" width="160" height="240" fill="#676f9d" stroke="#1b1f30" stroke-width="3"/>
+<path d="M280 30 l-14 60 l10 30 l-16 50 l14 40 l-8 60" fill="none" stroke="#f4f5fa" stroke-width="3"/>
+<circle cx="250" cy="160" r="8" fill="url(#steel)"/>
+<rect x="290" y="120" width="70" height="12" rx="3" fill="url(#steel)" transform="rotate(-25 290 120)"/>
+<text x="390" y="290" text-anchor="end" font-family="monospace" font-size="11" fill="#b9bedb" opacity=".7">illustration · forced side door</text></svg>

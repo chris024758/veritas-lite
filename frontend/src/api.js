@@ -15,24 +15,50 @@ async function request(path, options) {
   return body;
 }
 
-function postJson(path, data) {
+function sendJson(method, path, data) {
   return request(path, {
-    method: "POST",
+    method,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
   });
 }
+const postJson = (path, data) => sendJson("POST", path, data);
+
+export const listCases = () => request("/cases");
 
 export const getCase = (caseId) => request(`/cases/${caseId}`);
 
-export const startSession = (caseId, subjectName) =>
-  postJson("/sessions/start", { case_id: caseId, subject_name: subjectName });
+export const addSubject = (caseId, person) => postJson(`/cases/${caseId}/subjects`, person);
+
+export const updateSubject = (subjectId, changes) => sendJson("PATCH", `/subjects/${subjectId}`, changes);
+
+export const startSession = (caseId, subjectId) =>
+  postJson("/sessions/start", { case_id: caseId, subject_id: subjectId });
 
 export const submitStatement = (sessionId, text) =>
   postJson(`/sessions/${sessionId}/statements`, { text });
 
-export function submitAudio(sessionId, blob) {
+// Speech-to-text only: the text comes back for review and nothing is checked yet.
+export function transcribe(sessionId, blob) {
   const form = new FormData();
   form.append("audio", blob, "clip.webm");
-  return request(`/sessions/${sessionId}/audio`, { method: "POST", body: form });
+  return request(`/sessions/${sessionId}/transcribe`, { method: "POST", body: form });
 }
+
+// An image added to the interview: stored and shown, never sent to the LLM.
+export function addAttachment(sessionId, file, caption) {
+  const form = new FormData();
+  form.append("image", file, file.name);
+  if (caption) form.append("caption", caption);
+  return request(`/sessions/${sessionId}/attachments`, { method: "POST", body: form });
+}
+
+export const assetUrl = (path) => (path ? `${API_URL}${path}` : null);
+
+export const getTimeline = (caseId) => request(`/cases/${caseId}/timeline`);
+
+export const endSession = (sessionId) => postJson(`/sessions/${sessionId}/end`, {});
+
+export const generateReport = (sessionId) => postJson(`/sessions/${sessionId}/report`, {});
+
+export const reportDocxUrl = (sessionId) => `${API_URL}/sessions/${sessionId}/report.docx`;

@@ -9,7 +9,9 @@ from pathlib import Path
 BACKEND = Path(__file__).resolve().parent.parent
 sys.path[:0] = [str(BACKEND), str(BACKEND / "tests")]
 
-os.environ["VERITAS_DB"] = os.path.join(tempfile.mkdtemp(), "fake_stack.db")
+_tmp = tempfile.mkdtemp()
+os.environ["VERITAS_DB"] = os.path.join(_tmp, "fake_stack.db")
+os.environ["VERITAS_UPLOADS"] = os.path.join(_tmp, "uploads")
 os.environ["GEMINI_API_KEY"] = "fake-test-key"
 os.environ["GOOGLE_GEMINI_BASE_URL"] = "http://127.0.0.1:8019"
 

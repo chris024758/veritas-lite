@@ -7,3 +7,4 @@ requests>=2.32
 faster-whisper>=1.1
 # faster-whisper 1.2.1 passes an argument PyAV 19 removed
 av<16
+python-docx>=1.1

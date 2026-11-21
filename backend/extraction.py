@@ -22,6 +22,9 @@ class Entities(BaseModel):
     destination: str | None = None
     claimed_minutes: float | None = None
     time: str | None = None
+    time_start: str | None = None
+    time_end: str | None = None
+    time_approx: bool | None = None
     location: str | None = None
     person: str | None = None
     vehicle: str | None = None
@@ -56,6 +59,7 @@ Rules:
 - When two timestamps bound a journey, set claimed_minutes to the difference between them, even if the speaker never states a duration. Example: "I left place A at 6:10 and got to place B by 6:35" gives a ROUTE claim with origin "place A", destination "place B", claimed_minutes 25.
 - A journey with an arrival time also gets its own TIMELINE claim for being at the destination at that time.
 - Copy places, people, and times exactly as spoken into entities. Do not resolve vague references such as "the office" or "my place", and do not invent details the speaker did not say. Leave unknown entity fields null.
+- For the timeline, also set time_start and, for a span or journey, time_end, as 24-hour "HH:MM". Use the rest of the statement to settle AM or PM and to turn relative times into clock times (for example "left at 9 and rode 20 minutes" gives time_end 20 minutes after time_start). Set time_approx true for "around", "about" or a guessed time. Leave them null when the statement gives no way to place the claim in time.
 - Do not extract opinions, feelings, greetings, or failures of memory. If the statement contains nothing checkable (for example "I don't remember"), return an empty claims list.
 
 Statement:

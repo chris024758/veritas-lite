@@ -1,51 +1,33 @@
 import { API_URL } from "./api.js";
+import FlagPopover, { FindingBody } from "./FlagPopover.jsx";
+import { KIND_LABEL, sourceLabel } from "./findings.js";
 
-const STATUS_ORDER = ["CONFLICT", "FLAGGED", "CONSISTENT", "PENDING"];
-
-function RouteMetrics({ result }) {
-  const hasGap = result.gap_minutes !== undefined;
-  return (
-    <dl className="metrics">
-      <div><dt>Actual</dt><dd>{result.actual_minutes} min</dd></div>
-      {hasGap && <div><dt>Claimed</dt><dd>{result.claimed_minutes} min</dd></div>}
-      {hasGap && (
-        <div>
-          <dt>Gap</dt>
-          <dd className={result.exceeds_tolerance ? "over" : ""}>
-            {result.gap_minutes > 0 ? "+" : ""}{result.gap_minutes} min
-          </dd>
-        </div>
-      )}
-      <div><dt>Distance</dt><dd>{result.distance_km} km</dd></div>
-      {result.osrm_minutes !== null && <div><dt>OSRM raw</dt><dd>{result.osrm_minutes} min</dd></div>}
-      {result.assumed_speed_kmh !== null && <div><dt>Assumed</dt><dd>{result.assumed_speed_kmh} km/h</dd></div>}
-    </dl>
-  );
-}
+export const STATUS_ORDER = ["CONFLICT", "FLAGGED", "CONSISTENT", "PENDING"];
+const STATUS_ICON = { CONFLICT: "✕", FLAGGED: "!", CONSISTENT: "✓", PENDING: "…" };
 
 function ToolTrace({ claim }) {
   const calls = claim.details?.tool_calls ?? [];
   if (calls.length === 0) return null;
   const names = [...new Set(calls.map((call) => call.name))];
-  const images = calls.filter((call) => call.result?.image_url);
-  const routes = calls.filter((call) => call.name === "check_route" && call.result?.actual_minutes !== undefined);
   return (
-    <>
-      {routes.map((call, index) => <RouteMetrics key={index} result={call.result} />)}
-      <div className="tools">
-        {names.map((name) => <code key={name}>{name}</code>)}
-      </div>
-      {images.map((call) => (
-        <figure key={call.result.image_url} className="tool-image">
-          <img src={`${API_URL}${call.result.image_url}`} alt={call.result.description} />
-          <figcaption>Illustrative only, not evidence</figcaption>
-        </figure>
-      ))}
-    </>
+    <div className="tools">
+      {names.map((name) => <code key={name}>{name}</code>)}
+    </div>
   );
 }
 
-function Tally({ claims }) {
+// Generated images stay visible on the claim card, labelled so nobody mistakes them for evidence.
+function GeneratedImages({ claim }) {
+  const images = (claim.details?.tool_calls ?? []).filter((call) => call.result?.image_url);
+  return images.map((call) => (
+    <figure key={call.result.image_url} className="tool-image">
+      <img src={`${API_URL}${call.result.image_url}`} alt={call.result.description} />
+      <figcaption>Generated image of the vehicle as described · illustrative only, not evidence</figcaption>
+    </figure>
+  ));
+}
+
+export function Tally({ claims }) {
   return (
     <ul className="tally" aria-label="Claims by status">
       {STATUS_ORDER.map((status) => {
@@ -61,38 +43,56 @@ function Tally({ claims }) {
   );
 }
 
-export default function ClaimsTable({ claims }) {
-  if (claims.length === 0) {
-    return <p className="muted empty">No claims yet. Submit a statement to check it.</p>;
-  }
+export function StatusBadge({ status }) {
   return (
-    <>
-      <Tally claims={claims} />
-      <div className="table-wrap">
-        <table className="claims">
-          <thead>
-            <tr>
-              <th>Claim</th>
-              <th>Type</th>
-              <th>Status</th>
-              <th>Reason</th>
-            </tr>
-          </thead>
-          <tbody>
-            {claims.map((claim) => (
-              <tr key={claim.id} className={`row-${claim.status.toLowerCase()}`}>
-                <td>{claim.text}</td>
-                <td className="type">{claim.claim_type}</td>
-                <td><span className={`badge ${claim.status.toLowerCase()}`}>{claim.status}</span></td>
-                <td>
-                  {claim.reason}
-                  <ToolTrace claim={claim} />
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </>
+    <span className={`badge ${status.toLowerCase()}`}>
+      <span aria-hidden="true">{STATUS_ICON[status]}</span> {status}
+    </span>
+  );
+}
+
+// Claim rows for one turn. A claim with alibi-check findings gets a red edge and one chip
+// per finding, each opening the notched flag popover.
+export default function ClaimRows({ claims, findings, highlighted, sessionId, freshFindingIds, onJump }) {
+  if (claims.length === 0) return <p className="muted small no-claims">No checkable claims in this turn.</p>;
+  return (
+    <ul className="claim-rows">
+      {claims.map((claim) => {
+        const mine = findings.filter((f) => f.claim.id === claim.id);
+        const classes = [
+          "claim-row", `row-${claim.status.toLowerCase()}`,
+          mine.length ? "has-finding" : "", highlighted.includes(claim.id) ? "highlight" : "",
+        ];
+        return (
+          <li key={claim.id} id={`claim-${claim.id}`} className={classes.join(" ")}>
+            <div className="claim-main">
+              <StatusBadge status={claim.status} />
+              <span className="type">{claim.claim_type}</span>
+              <p className="claim-text">{claim.text}</p>
+            </div>
+            {mine.length > 0 && (
+              <div className="flag-chips">
+                {mine.map((f) => (
+                  <FlagPopover
+                    key={f.id}
+                    autoOpenKey={freshFindingIds.includes(f.id) ? f.id : null}
+                    content={<FindingBody finding={f} onJump={onJump} />}
+                  >
+                    <span className="flag-chip">
+                      <span aria-hidden="true">⚠</span> Clashes with {KIND_LABEL[f.kind].toLowerCase()} · {sourceLabel(f, sessionId)}
+                    </span>
+                  </FlagPopover>
+                ))}
+              </div>
+            )}
+            <details className="claim-details">
+              <summary>{claim.reason}</summary>
+              <ToolTrace claim={claim} />
+            </details>
+            <GeneratedImages claim={claim} />
+          </li>
+        );
+      })}
+    </ul>
   );
 }

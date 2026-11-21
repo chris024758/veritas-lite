@@ -91,6 +91,8 @@ Verdicts:
 - CONFLICT: a record directly contradicts the claim.
 - PENDING: the tools could not establish anything either way, for example nothing relevant was found.
 
+For a claim that describes a vehicle, call generate_image once with that vehicle as described, so the investigator can picture it; it never affects the verdict.
+
 When a route check informed a verdict, the reason must state actual_minutes and claimed_minutes, and mention the assumed speed if the result used one. When a record informed it, name that record and what it says. Do not treat a failed tool as evidence.
 
 Every tool result carries a call_id. When you are finished, reply with only a JSON object holding one verdict per claim, listing the call_ids of the results that verdict relied on:

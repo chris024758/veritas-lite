@@ -42,7 +42,7 @@ def tools_used(claim):
 r = requests.get(f"{API}/cases/{CASE}")
 body = r.json()
 check("GET case 200", r.status_code == 200)
-check("case has 2 subjects, 4 evidence", len(body["subjects"]) == 2 and len(body["evidence"]) == 4)
+check("case has 2 subjects, 5 evidence", len(body["subjects"]) == 2 and len(body["evidence"]) == 5)
 check("GET unknown case 404", requests.get(f"{API}/cases/NOPE").status_code == 404)
 
 # POST /sessions/start
@@ -73,7 +73,8 @@ check("Hadapsar leg is not flagged", leg["status"] == "CONSISTENT", leg["reason"
 home = next(c for c in body["claims"] if c["entities"].get("time") == "9:50")
 check("home-by-9:50 cross-ref CONFLICT from witness record", home["status"] == "CONFLICT" and "witness_statement" in home["reason"], home["reason"])
 check("every alibi claim has a reason", all(c["reason"] for c in body["claims"]))
-check("alibi costs at most 5 Gemini calls in total", alibi_calls <= 5, f"{alibi_calls} calls for 4 claims")
+# 1 extraction + at most 4 verification + 1 alibi check + 1 follow-ups.
+check("alibi costs at most 7 Gemini calls in total", alibi_calls <= 7, f"{alibi_calls} calls for 4 claims")
 check("each claim keeps only the tool calls it cited", [c["name"] for c in route["details"]["tool_calls"]] == ["search_case_file", "check_route"])
 
 # Unrelated statement: other places and people, using web_search and generate_image

@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300"><defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#424769"/><stop offset="1" stop-color="#2d3250"/></linearGradient><linearGradient id="gold" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffe3a3"/><stop offset=".5" stop-color="#e8b04a"/><stop offset="1" stop-color="#a8741f"/></linearGradient><linearGradient id="steel" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#e6e8f2"/><stop offset="1" stop-color="#8c93c4"/></linearGradient></defs><rect width="400" height="300" fill="url(#bg)"/>
+<circle cx="140" cy="70" r="12" fill="url(#gold)" stroke="#a8741f"/><path d="M92 190 Q140 90 188 190 z" fill="url(#gold)" stroke="#a8741f" stroke-width="2"/><line x1="140" y1="82" x2="140" y2="120" stroke="#e8b04a" stroke-width="4"/><circle cx="104" cy="204" r="6" fill="#e8b04a"/>
+<circle cx="122" cy="204" r="6" fill="#e8b04a"/>
+<circle cx="140" cy="204" r="6" fill="#e8b04a"/>
+<circle cx="158" cy="204" r="6" fill="#e8b04a"/>
+<circle cx="176" cy="204" r="6" fill="#e8b04a"/>
+<circle cx="260" cy="70" r="12" fill="url(#gold)" stroke="#a8741f"/><path d="M212 190 Q260 90 308 190 z" fill="url(#gold)" stroke="#a8741f" stroke-width="2"/><line x1="260" y1="82" x2="260" y2="120" stroke="#e8b04a" stroke-width="4"/><circle cx="224" cy="204" r="6" fill="#e8b04a"/>
+<circle cx="242" cy="204" r="6" fill="#e8b04a"/>
+<circle cx="260" cy="204" r="6" fill="#e8b04a"/>
+<circle cx="278" cy="204" r="6" fill="#e8b04a"/>
+<circle cx="296" cy="204" r="6" fill="#e8b04a"/>
+<text x="390" y="290" text-anchor="end" font-family="monospace" font-size="11" fill="#b9bedb" opacity=".7">illustration · jhumka earrings</text></svg>
