@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { assetUrl, generateIllustration, reviewIllustration } from "./api.js";
 
-export default function ImageGenPanel({ record, sourceText, onChange }) {
+export default function ImageGenPanel({ record, target, sourceText, onChange }) {
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(null);
   const preview = record.illustration_preview;
@@ -11,7 +11,7 @@ export default function ImageGenPanel({ record, sourceText, onChange }) {
     setBusy(label);
     setError(null);
     try {
-      onChange(await action());
+      onChange(await action(), target);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -27,26 +27,33 @@ export default function ImageGenPanel({ record, sourceText, onChange }) {
         <summary>Source statement</summary>
         <p>{sourceText}</p>
       </details>}
-      {preview ? (
+      {record.image ? (
+        <figure className="image-gen-result">
+          <img src={assetUrl(record.image)} alt="Approved illustration based on the interview statement" />
+          <figcaption className="muted">Approved illustration · Not evidence</figcaption>
+        </figure>
+      ) : preview ? (
         <>
           <figure className="image-gen-result">
             <img src={assetUrl(preview)} alt="Draft illustration based on the interview statement" />
-            <figcaption className="muted">Draft illustration for review. Approval adds it to the case record as an illustration.</figcaption>
+            <figcaption className="muted">{target === "evidence"
+              ? "Approval adds the illustration to the case record."
+              : "Approval saves this illustration with the claim."}</figcaption>
           </figure>
           <div className="actions">
             <button type="button" className="primary" disabled={!!busy}
-              onClick={() => run("Approving…", () => reviewIllustration(record.session_id, record.id, preview, true))}>
+              onClick={() => run("Approving…", () => reviewIllustration(record.session_id, target, record.id, preview, true))}>
               Approve illustration
             </button>
             <button type="button" className="secondary" disabled={!!busy}
-              onClick={() => run("Discarding…", () => reviewIllustration(record.session_id, record.id, preview, false))}>
+              onClick={() => run("Discarding…", () => reviewIllustration(record.session_id, target, record.id, preview, false))}>
               Discard preview
             </button>
           </div>
         </>
       ) : (
         <button type="button" className="secondary" disabled={!!busy}
-          onClick={() => run("Generating preview…", () => generateIllustration(record.session_id, record.id))}>
+          onClick={() => run("Generating preview…", () => generateIllustration(record.session_id, target, record.id))}>
           Generate preview
         </button>
       )}

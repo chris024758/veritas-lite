@@ -16,10 +16,10 @@ const routeChecks = (statement) =>
 
 // Everything the checks produce, kept out of the conversation: alerts, follow-ups,
 // the maps check, then-vs-now cards, and each claim's verdict.
-function AddedRecords({ statements, attachments, onIllustrationChanged }) {
+function AddedRecords({ statements, attachments }) {
   const latest = statements[statements.length - 1];
   const added = [
-    ...statements.flatMap((s) => (s.new_records ?? []).map((r) => ({ ...r, fresh: s === latest, sourceText: s.text }))),
+    ...statements.flatMap((s) => (s.new_records ?? []).map((r) => ({ ...r, fresh: s === latest }))),
     ...attachments.filter((a) => a.evidence).map((a, i, all) => ({ ...a.evidence, fresh: i === all.length - 1 })),
   ];
   if (added.length === 0) return null;
@@ -36,10 +36,30 @@ function AddedRecords({ statements, attachments, onIllustrationChanged }) {
               {r.image_kind === "generated" ? "Image generated from the description · not evidence"
                 : r.image_kind === "photo" ? "Uploaded photo" : ""}
             </p>
-            {r.illustration_prompt && !r.image && (
-              <ImageGenPanel record={r} sourceText={r.sourceText} onChange={onIllustrationChanged} />
-            )}
           </div>
+        </article>
+      ))}
+    </section>
+  );
+}
+
+function Illustrations({ statements, onChange }) {
+  const cards = [...statements].reverse().flatMap((statement) => [
+    ...statement.claims.filter((claim) => claim.illustration).map((claim) => ({
+      record: claim.illustration, text: claim.text, target: "claims", statement,
+    })),
+    ...(statement.new_records ?? []).filter((record) => record.illustration_prompt).map((record) => ({
+      record, text: record.description, target: "evidence", statement,
+    })),
+  ]);
+  if (cards.length === 0) return null;
+  return (
+    <section className="side-section" aria-label="Image suggestions">
+      <h3 className="eyebrow">Image suggestions</h3>
+      {cards.map(({ record, text, target, statement }) => (
+        <article key={`${target}-${record.id}`} className="maps-panel illustration-card">
+          <p className="small"><span className="muted">{turnLabel(statement.turn_index)} · </span>{text}</p>
+          <ImageGenPanel record={record} target={target} sourceText={statement.text} onChange={onChange} />
         </article>
       ))}
     </section>
@@ -83,10 +103,11 @@ export default function SidePanel({ statements, attachments = [], sessionId, fre
         <Tally claims={claims} />
       </div>
       <AlibiBanner findings={latest?.alibi_findings ?? []} pulseKey={latest?.id} />
+      <Illustrations statements={statements} onChange={onIllustrationChanged} />
       <FollowUps questions={latest?.followups} error={latest?.followup_error} onPick={onPickQuestion} onHover={setHighlighted} />
 
       {imageFindings}
-      <AddedRecords statements={statements} attachments={attachments} onIllustrationChanged={onIllustrationChanged} />
+      <AddedRecords statements={statements} attachments={attachments} />
 
       {maps.length > 0 && (
         <section className="side-section">

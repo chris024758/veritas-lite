@@ -5,7 +5,7 @@
 | Model | Black Forest Labs FLUX.1 Schnell |
 | Model ID | `@cf/black-forest-labs/flux-1-schnell` |
 | Inference provider | Cloudflare Workers AI, via its REST API |
-| Prompt source | Gemini, using the witness's submitted statement |
+| Prompt source | Gemini, using the submitted interview statement |
 
 ## Local setup
 
@@ -17,8 +17,8 @@
    CLOUDFLARE_API_TOKEN=your_api_token
    ```
 
-3. Restart the backend. In an interview, submit a witness statement with a visual observation. If it produces a new case record with enough visual detail, its card in **Findings** shows the suggested prompt.
-4. Choose **Generate preview**, then **Approve illustration** or **Discard preview**. Approval adds the illustration to the case record.
+3. Restart the backend. Submit a statement with a visual observation. When the claim finishes checking, the suggested prompt appears under **Image suggestions** near the top of **Findings**.
+4. Choose **Generate preview**, then **Approve illustration** or **Discard preview**. Approval saves the illustration with the claim or, when the statement produced a matching case record, with that record.
 
 The backend sends the saved prompt to Cloudflare and serves the resulting JPEG from `/generated/`. The case file only displays approved images, labeled as generated illustrations. Provider or configuration errors appear on the record's review card.
 

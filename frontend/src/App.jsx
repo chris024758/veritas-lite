@@ -205,17 +205,22 @@ function Workspace() {
     }
   }
 
-  function illustrationChanged(record) {
+  function illustrationChanged(record, target) {
     setInterview((iv) => {
       if (iv?.sessionId !== record.session_id) return iv;
       return {
         ...iv,
-        statements: iv.statements.map((statement) => statement.id === record.statement_id
-          ? { ...statement, new_records: statement.new_records.map((item) => item.id === record.id ? record : item) }
-          : statement),
+        statements: iv.statements.map((statement) => {
+          if (statement.id !== record.statement_id) return statement;
+          if (target === "claims") {
+            return { ...statement, claims: statement.claims.map((claim) =>
+              claim.id === record.id ? { ...claim, illustration: record } : claim) };
+          }
+          return { ...statement, new_records: statement.new_records.map((item) => item.id === record.id ? record : item) };
+        }),
       };
     });
-    if (record.image && parseRoute(window.location.hash).caseId === record.case_id) {
+    if (target === "evidence" && record.image && parseRoute(window.location.hash).caseId === record.case_id) {
       refreshCase(record.case_id);
     }
   }

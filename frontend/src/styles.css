@@ -749,5 +749,5 @@ mark.clash { padding: 0 3px; border-radius: 4px; background: var(--alert); color
 .image-finding-details h3 { font-size: 12px; margin-top: 8px; }
 .image-finding .extraction-text { white-space: pre-wrap; }
 .image-gen-result { margin: 6px 0; }
-.added-record .image-gen-result img { display: block; width: auto; height: auto; max-width: 100%; max-height: 32vh; object-fit: contain; }
+.image-gen-result img { display: block; width: auto; height: auto; max-width: 100%; max-height: 32vh; object-fit: contain; border-radius: 8px; }
 .image-gen-result figcaption { margin-top: 6px; font-size: 12px; }
