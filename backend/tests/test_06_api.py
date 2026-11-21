@@ -77,7 +77,7 @@ check("every alibi claim has a reason", all(c["reason"] for c in body["claims"])
 check("alibi costs at most 7 Gemini calls in total", alibi_calls <= 7, f"{alibi_calls} calls for 4 claims")
 check("each claim keeps only the tool calls it cited", [c["name"] for c in route["details"]["tool_calls"]] == ["search_case_file", "check_route"])
 
-# Unrelated statement: other places and people, using web_search and generate_image
+# Unrelated statement: other places and people, using web search and case-file lookup.
 r = post_statement(session, UNRELATED)
 body = r.json()
 print(json.dumps([{k: c[k] for k in ("claim_type", "status", "reason")} | {"tools": tools_used(c)}
@@ -88,10 +88,7 @@ check("long trip uses OSRM time, no urban speed", train["assumed_speed_kmh"] is 
 web = body["claims"][1]
 check("web_search result and source reach the claim", tools_used(web) == ["web_search"] and web["details"]["tool_calls"][0]["result"]["sources"])
 van = body["claims"][2]
-image = van["details"]["tool_calls"][-1]["result"]
-check("generate_image called, not a placeholder", image["placeholder"] is False)
-r = requests.get(API + image["image_url"])
-check("generated image is served as a PNG", r.status_code == 200 and r.content[:4] == b"\x89PNG", f"{len(r.content)} bytes")
+check("verification only looks up the vehicle", tools_used(van) == ["search_case_file"])
 check("unrelated vehicle finds nothing in the case file", van["status"] == "PENDING")
 
 # Zero checkable claims

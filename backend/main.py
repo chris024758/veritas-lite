@@ -23,7 +23,7 @@ import report_docx
 import stt
 import timeline
 import verification
-from tools.image_gen import OUTPUT_DIR, generate_image
+from tools.image_gen import OUTPUT_DIR, discard_generated_file, generate_image
 from tools.image_extract import ExtractionError, MAX_IMAGE_BYTES, extract_image
 from tools.event_check import verify_event
 
@@ -46,15 +46,50 @@ IMAGE_TYPES = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp",
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 
 
-class GenerateImageRequest(BaseModel):
-    description: str
+class IllustrationReview(BaseModel):
+    preview: str
+    approve: bool
 
 
-@app.post("/tools/generate-image")
-def generate_image_endpoint(body: GenerateImageRequest):
-    if not body.description.strip():
-        raise HTTPException(422, "description must not be empty")
-    return generate_image(body.description)
+def _illustration_record(session_id: int, evidence_id: int) -> dict:
+    record = db.get_illustration_record(session_id, evidence_id)
+    if record is None or not record["illustration_prompt"]:
+        raise HTTPException(404, "no illustration suggestion for this record")
+    return record
+
+
+@app.post("/sessions/{session_id}/evidence/{evidence_id}/illustration")
+def generate_illustration(session_id: int, evidence_id: int):
+    record = _illustration_record(session_id, evidence_id)
+    if record["image"] or record["illustration_preview"]:
+        return record
+
+    prompt = (
+        "Create a clearly stylized sketch with a plain background. Do not depict a recognizable face, "
+        "legible license plate, identifying text, or surveillance footage. Subject: "
+        + record["illustration_prompt"]
+    )
+    result = generate_image(prompt)
+    preview = result.get("image_url")
+    if result.get("placeholder") and preview:
+        discard_generated_file(preview)
+    if not preview or result.get("placeholder"):
+        raise HTTPException(502, result.get("note") or "The image provider returned no illustration.")
+    if not db.save_illustration_preview(evidence_id, preview):
+        discard_generated_file(preview)
+    return _illustration_record(session_id, evidence_id)
+
+
+@app.post("/sessions/{session_id}/evidence/{evidence_id}/illustration/review")
+def review_illustration(session_id: int, evidence_id: int, body: IllustrationReview):
+    record = _illustration_record(session_id, evidence_id)
+    if body.approve and record["image"] and record["image"] == body.preview:
+        return record
+    if not db.review_illustration(evidence_id, body.preview, body.approve):
+        raise HTTPException(409, "this illustration preview has changed")
+    if not body.approve:
+        discard_generated_file(body.preview)
+    return _illustration_record(session_id, evidence_id)
 
 
 @app.post("/tools/extract-image")
@@ -137,26 +172,21 @@ def _alibi_check(claims: list[dict], text: str, statement_id: int, session: dict
 
 
 def _keep_records(verified: dict, stored: list[dict], session: dict, statement_id: int) -> list[dict]:
-    """Turn the model's record PROPOSALS into case records, under the program's rules: a suspect
-    cannot add records, each must come from a real claim of this statement, and an image is
-    attached only from a real generate_image call, marked as generated so nothing treats it as
-    proof."""
+    """Keep case records grounded in a claim and save any illustration suggestion for review."""
     subject = db.get_subject(session["subject_id"]) if session["subject_id"] is not None else None
     if subject is None or subject["role"] == "Suspect":
         return []
-    images = {c["id"]: c["result"].get("image_url") for c in verified["tool_calls"]
-              if c["name"] == "generate_image" and isinstance(c.get("result"), dict)}
     kept = []
     for proposal in verified["records"][:3]:
         if not 1 <= proposal["claim"] <= len(stored) or not proposal["description"].strip():
             continue
         record_type = re.sub(r"[^a-z0-9_]+", "_", proposal["record_type"].strip().lower()).strip("_") or "observation"
-        image = images.get(proposal.get("image_call"))
+        prompt = (proposal.get("image_prompt") or "").strip()[:800]
         metadata = {k: v for k, v in (proposal.get("metadata") or {}).items() if v not in (None, "", [])}
         metadata.setdefault("reported_by", subject["full_name"])
         kept.append(db.add_evidence(
             session["case_id"], record_type, proposal["description"].strip(), metadata,
-            source="statement", image=image, image_kind="generated" if image else None,
+            source="statement", illustration_prompt=prompt or None,
             session_id=session["id"], statement_id=statement_id, subject_id=subject["id"],
         ))
     return kept

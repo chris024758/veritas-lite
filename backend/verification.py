@@ -1,4 +1,4 @@
-"""Gemini tool-calling loop over all of one statement's claims at once. All four tools are
+"""Gemini tool-calling loop over all of one statement's claims at once. The verification tools are
 bound on every call and the model chooses among them; there is no routing on claim_type."""
 import json
 import re
@@ -9,7 +9,6 @@ from pydantic import BaseModel
 import db
 import gemini_client
 from tools.case_file import search_case_file
-from tools.image_gen import generate_image
 from tools.routing import check_route
 from tools.web_search import web_search
 
@@ -65,19 +64,6 @@ TOOL_DECLARATIONS = [
             "required": ["query"],
         },
     ),
-    types.FunctionDeclaration(
-        name="generate_image",
-        description=(
-            "Generate an illustrative image from a text description, for example a vehicle or "
-            "scene described in the claim or records, to help an investigator picture it. "
-            "Illustrative only: it is never evidence and never affects the verdict."
-        ),
-        parameters={
-            "type": "object",
-            "properties": {"description": {"type": "string"}},
-            "required": ["description"],
-        },
-    ),
 ]
 
 # Must stay generic: the case details arrive through tools, not through this prompt.
@@ -91,15 +77,15 @@ Verdicts:
 - CONFLICT: a record directly contradicts the claim.
 - PENDING: the tools could not establish anything either way, for example nothing relevant was found.
 
-For a claim that describes a vehicle, call generate_image once with that vehicle as described, so the investigator can picture it; it never affects the verdict.
+Case records: if the speaker is a witness and describes something physical they saw at a relevant time and place (a vehicle, a person, an object) that the case records do not already hold, propose it as a new case record. Never propose records from a suspect's account of their own movements, and never propose a record that only restates something already on file.
 
-Case records: if the speaker is a witness and describes something physical they saw at a relevant time and place (a vehicle, a person, an object) that the case records do not already hold, propose it as a new case record. For a vehicle or a person, cite the generate_image call that pictures it. Never propose records from a suspect's account of their own movements, and never propose a record that only restates something already on file.
+For a proposed record with enough visual detail, suggest an image_prompt for a neutral, clearly illustrative sketch. Use the visible details described by the witness in the full statement. Omit faces, identifiers, and unspecified colors, surroundings, and other details. Avoid surveillance framing or photographic reconstruction. Use null if there are no useful visual details. The illustration suggestion must never inform a verdict.
 
 When a route check informed a verdict, the reason must state actual_minutes and claimed_minutes, and mention the assumed speed if the result used one. When a record informed it, name that record and what it says. Do not treat a failed tool as evidence.
 
 Every tool result carries a call_id. When you are finished, reply with only a JSON object holding one verdict per claim, listing the call_ids of the results that verdict relied on, plus any proposed case records (usually none):
 {"verdicts": [{"claim": <claim number>, "status": "<verdict>", "reason": "<one or two sentences>", "evidence_calls": [<call_id>, ...]}],
- "records": [{"claim": <claim number>, "record_type": "<snake_case, e.g. vehicle_sighting>", "description": "<one or two sentences>", "metadata": {"time": "<HH:MM if known>", "location": "<place>", ...}, "image_call": <call_id of generate_image or null>}]}"""
+ "records": [{"claim": <claim number>, "record_type": "<snake_case, e.g. vehicle_sighting>", "description": "<one or two sentences>", "metadata": {"time": "<HH:MM if known>", "location": "<place>"}, "image_prompt": "<short visual description or null>"}]}"""
 
 VERDICT_REMINDER = (
     'Give your verdicts now as JSON only: {"verdicts": [{"claim": <claim number>, '
@@ -119,7 +105,7 @@ class Record(BaseModel):
     record_type: str
     description: str
     metadata: dict = {}
-    image_call: int | None = None
+    image_prompt: str | None = None
 
 
 class Verdicts(BaseModel):
@@ -136,8 +122,6 @@ def _dispatch(name: str, args: dict, case_id: str, statement_id: int) -> dict:
             return check_route(args["origin"], args["destination"], args.get("claimed_minutes"))
         if name == "web_search":
             return web_search(args["query"])
-        if name == "generate_image":
-            return generate_image(args["description"])
     except KeyError as exc:
         return {"error": f"missing argument {exc} for {name}"}
     return {"error": f"unknown tool {name}"}

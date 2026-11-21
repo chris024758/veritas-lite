@@ -68,7 +68,9 @@ CREATE TABLE IF NOT EXISTS evidence (
     session_id INTEGER REFERENCES sessions(id),
     statement_id INTEGER REFERENCES statements(id),
     subject_id INTEGER REFERENCES subjects(id),
-    created_at TEXT
+    created_at TEXT,
+    illustration_prompt TEXT,
+    illustration_preview TEXT
 );
 -- Alibi-check findings: a new claim clashing with an earlier claim (SELF or WITNESS) or with a
 -- case-file record (EVIDENCE). Exactly one of other_claim_id / evidence_id is set.
@@ -141,13 +143,15 @@ MIGRATIONS = [
     ("evidence", "statement_id", "INTEGER REFERENCES statements(id)"),
     ("evidence", "subject_id", "INTEGER REFERENCES subjects(id)"),
     ("evidence", "created_at", "TEXT"),
+    ("evidence", "illustration_prompt", "TEXT"),
+    ("evidence", "illustration_preview", "TEXT"),
     ("cases", "incident_date", "TEXT"),
     ("attachments", "evidence_id", "INTEGER REFERENCES evidence(id)"),
     ("attachments", "extraction_json", "TEXT"),
 ]
 
 EVIDENCE_COLUMNS = ("id, case_id, evidence_type, description, metadata_json, image, image_kind, "
-                    "source, session_id, statement_id, subject_id, created_at")
+                    "source, session_id, statement_id, subject_id, created_at, illustration_prompt, illustration_preview")
 
 
 def _drop_evidence_unique() -> None:
@@ -429,20 +433,53 @@ def save_attachment_extraction(session_id: int, attachment_id: int, result: dict
 def add_evidence(case_id: str, evidence_type: str, description: str, metadata: dict, *,
                  source: str, image: str | None = None, image_kind: str | None = None,
                  session_id: int | None = None, statement_id: int | None = None,
-                 subject_id: int | None = None, connection: sqlite3.Connection | None = None) -> dict:
+                 subject_id: int | None = None, connection: sqlite3.Connection | None = None,
+                 illustration_prompt: str | None = None) -> dict:
     """A record from a witness's statement or an uploaded image."""
     with (connect() if connection is None else nullcontext(connection)) as conn:
         cur = conn.execute(
             """INSERT INTO evidence (case_id, evidence_type, description, metadata_json, image, image_kind,
-                   source, session_id, statement_id, subject_id, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   source, session_id, statement_id, subject_id, created_at, illustration_prompt)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (case_id, evidence_type, description, json.dumps(metadata), image, image_kind, source,
-             session_id, statement_id, subject_id, datetime.now(timezone.utc).isoformat()),
+             session_id, statement_id, subject_id, datetime.now(timezone.utc).isoformat(), illustration_prompt),
         )
         row = conn.execute("SELECT * FROM evidence WHERE id = ?", (cur.lastrowid,)).fetchone()
+    return _evidence_row(row)
+
+
+def _evidence_row(row: sqlite3.Row) -> dict:
     record = dict(row)
     record["metadata"] = json.loads(record.pop("metadata_json"))
     return record
+
+
+def get_illustration_record(session_id: int, evidence_id: int) -> dict | None:
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM evidence WHERE id = ? AND session_id = ? AND source = 'statement'",
+            (evidence_id, session_id),
+        ).fetchone()
+    return _evidence_row(row) if row else None
+
+
+def save_illustration_preview(evidence_id: int, preview: str) -> bool:
+    with connect() as conn:
+        return conn.execute(
+            "UPDATE evidence SET illustration_preview = ? WHERE id = ? AND image IS NULL AND illustration_preview IS NULL",
+            (preview, evidence_id),
+        ).rowcount == 1
+
+
+def review_illustration(evidence_id: int, preview: str, approve: bool) -> bool:
+    with connect() as conn:
+        if approve:
+            sql = "UPDATE evidence SET image = illustration_preview, image_kind = 'generated', illustration_preview = NULL"
+        else:
+            sql = "UPDATE evidence SET illustration_preview = NULL"
+        return conn.execute(
+            sql + " WHERE id = ? AND image IS NULL AND illustration_preview = ?", (evidence_id, preview),
+        ).rowcount == 1
 
 
 def get_claim_context(claim_id: int) -> dict | None:

@@ -4,7 +4,7 @@ Vertical slices (TDD skill: one test → one impl → repeat):
   1. Happy path: Cloudflare credentials set → image_url returned, placeholder=False
   2. No-token path: placeholder=True, image_url present, no crash
   3. Non-blocking: Cloudflare error → {success: False}, no exception raised
-  4. API endpoint contract: POST /tools/generate-image → 200 + image_url
+  4. Proposed prompt → preview → approval before attaching the illustration
 
 Run from backend/ directory:
     .venv\\Scripts\\python.exe -m unittest discover -s tests -p test_07_cloudflare_image_gen.py -v
@@ -88,43 +88,58 @@ class TestSlice3NonBlocking(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# Slice 4 — API endpoint: POST /tools/generate-image
-# Exercise the actual application endpoint.
+# Slice 4 — generation and approval against a witness record.
 # ---------------------------------------------------------------------------
 class TestSlice4ApiEndpoint(unittest.TestCase):
-    def test_endpoint_returns_200_with_image_url(self):
-        """POST /tools/generate-image must return 200 with an image_url key."""
-
+    def test_statement_prompt_is_used_and_only_approved_image_reaches_case_file(self):
         from fastapi.testclient import TestClient
-        # The report exporter is unrelated to this endpoint.
-        with patch.dict(sys.modules, {"report_docx": unittest.mock.MagicMock()}):
-            from main import app
+        import db
+        import main
+        import seed
 
-        client = TestClient(app)
-
-        with patch.dict(os.environ, _CREDENTIALS), patch("tools.image_gen.requests.post") as post:
+        with (
+            tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder,
+            patch.dict(os.environ, _CREDENTIALS),
+            patch("tools.image_gen.requests.post") as post,
+            patch("db.DB_PATH", str(Path(folder) / "illustrations.db")),
+        ):
+            seed.seed()
+            client = TestClient(main.app)
+            session = db.create_session(seed.CASE_ID, "Ramesh Kulkarni")
+            statement = db.add_statement(session["id"], "I saw a white scooter near the shop shutter.")
+            suggested = "A white scooter near a shop shutter."
+            record, = main._keep_records({"records": [{
+                "claim": 1, "record_type": "vehicle_sighting", "description": statement["text"],
+                "image_prompt": suggested,
+            }]}, [{}], session, statement["id"])
+            post.assert_not_called()
             post.return_value.json.return_value = {
                 "success": True,
                 "result": {"image": base64.b64encode(_TEST_JPEG).decode("ascii")},
             }
-            prompt = "a white scooter near a shop shutter"
-            resp = client.post("/tools/generate-image", json={"description": prompt})
-
-        self.assertEqual(resp.status_code, 200, resp.text)
-        body = resp.json()
-        self.assertFalse(body["placeholder"])
-        self.assertEqual(body["model"], "@cf/black-forest-labs/flux-1-schnell")
-        post.assert_called_once_with(
-            "https://api.cloudflare.com/client/v4/accounts/fake-account/ai/run/"
-            "@cf/black-forest-labs/flux-1-schnell",
-            headers={"Authorization": "Bearer fake-token"},
-            json={"prompt": prompt},
-            timeout=120,
-        )
-        image = client.get(body["image_url"])
-        self.assertEqual(image.status_code, 200)
-        self.assertEqual(image.headers["content-type"], "image/jpeg")
-        self.assertEqual(image.content, _TEST_JPEG)
+            endpoint = f"/sessions/{session['id']}/evidence/{record['id']}/illustration"
+            review = f"{endpoint}/review"
+            self.assertEqual(client.post(review, json={"preview": "/generated/arbitrary.jpg", "approve": True}).status_code, 409)
+            self.assertEqual(client.post(endpoint.replace(f"/sessions/{session['id']}/", "/sessions/999/")).status_code, 404)
+            with patch("tools.image_gen.OUTPUT_DIR", Path(folder)):
+                draft = client.post(endpoint).json()
+                preview = draft["illustration_preview"]
+                self.assertEqual((Path(folder) / Path(preview).name).read_bytes(), _TEST_JPEG)
+                self.assertTrue(post.call_args.kwargs["json"]["prompt"].endswith(suggested))
+                self.assertIsNone(draft["image"])
+                on_file = next(r for r in db.get_case(seed.CASE_ID)["evidence"] if r["id"] == record["id"])
+                self.assertIsNone(on_file["image"])
+                self.assertEqual(client.post(review, json={"preview": preview, "approve": False}).status_code, 200)
+                self.assertEqual(client.post(review, json={"preview": preview, "approve": True}).status_code, 409)
+                preview = client.post(endpoint).json()["illustration_preview"]
+                approved = client.post(review, json={"preview": preview, "approve": True}).json()
+            self.assertEqual(approved["image"], preview)
+            self.assertEqual(approved["image_kind"], "generated")
+            self.assertIsNone(approved["illustration_preview"])
+            self.assertEqual(client.post(endpoint).json()["image"], preview)
+            self.assertEqual(post.call_count, 2)
+            on_file = next(r for r in db.get_case(seed.CASE_ID)["evidence"] if r["id"] == record["id"])
+            self.assertEqual(on_file["image"], preview)
 
 
 if __name__ == "__main__":
