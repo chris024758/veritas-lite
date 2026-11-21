@@ -32,7 +32,7 @@ SUBJECTS = [
         "full_name": "Ramesh Kulkarni",
         "nicknames": "",
         "role": "Witness",
-        "notes": "Neighbouring paanwala.",
+        "notes": "Suresh's friend; lives in Hadapsar.",
     },
 ]
 
@@ -48,23 +48,6 @@ EVIDENCE = [
         "description": "Display cabinet opened cleanly with no glass damage; no sign of forced entry.",
         "metadata": {"item": "display cabinet", "condition": "opened cleanly, no glass damage",
                      "location": "Shree Lakshmi Jewellers, FC Road, Pune"},
-    },
-    {
-        "evidence_type": "witness_statement",
-        "description": (
-            "Ramesh Kulkarni, neighbouring paanwala, reports seeing a man in a blue helmet "
-            "loading a bag onto a white scooter near the rear shutter around 10:15 PM. The "
-            "scooter's plate partially matches Suresh Deshmukh's registered white Honda "
-            "Activa, MH12 AB 4521."
-        ),
-        "metadata": {
-            "witness": "Ramesh Kulkarni",
-            "time": "22:15",
-            "location": "near rear shutter, Shree Lakshmi Jewellers, FC Road, Pune",
-            "person_descriptor": "man in a blue helmet",
-            "vehicle_descriptor": "white scooter",
-            "plate_match": "partial match to MH12 AB 4521",
-        },
     },
     {
         "evidence_type": "insurance_claim",
@@ -87,7 +70,6 @@ EVIDENCE = [
 EVIDENCE_IMAGES = {
     "rear_shutter_lock": "/static/evidence/rear_shutter_lock.svg",
     "display_cabinet": "/static/evidence/display_cabinet.svg",
-    "witness_statement": "/static/evidence/witness_statement.svg",
     "insurance_claim": "/static/evidence/insurance_claim.svg",
     "stolen_items": "/static/evidence/stolen_items.svg",
     "door_damage": "/static/evidence/door_damage.svg",
@@ -106,68 +88,7 @@ STOLEN_ITEMS = [
 
 
 # The window the theft happened in, for the timeline's incident marker and alibi gaps.
-INCIDENT = {"incident_start": "21:30", "incident_end": "22:30"}
-
-# An earlier interview with the witness, so the subject's alibi has a prior statement to be
-# checked against from the first live turn. Verdicts are stored as-is, not re-verified.
-WITNESS_SESSION = {
-    "subject": "Ramesh Kulkarni",
-    "started_at": "2026-11-06T10:00:00+05:30",
-    "text": (
-        "I shut my paan stall at about ten. Around 10:15 I saw a man in a blue helmet loading a "
-        "bag onto a white Activa right by the jewellers' rear shutter. The plate started MH12 AB. "
-        "Then he rode off towards Kothrud."
-    ),
-    "claims": [
-        {"claim_type": "TIMELINE", "status": "CONSISTENT",
-         "text": "Shut the paan stall at about 10 PM.",
-         "entities": {"time": "22:00", "time_start": "22:00", "time_approx": True, "location": "paan stall, FC Road, Pune"},
-         "reason": "Matches the witness record on the case file."},
-        {"claim_type": "TIMELINE", "status": "CONSISTENT",
-         "text": "Saw a man in a blue helmet loading a bag onto a white Activa by the jewellers' rear shutter around 10:15 PM.",
-         "entities": {"time": "22:15", "time_start": "22:15", "time_approx": True,
-                      "location": "rear shutter, Shree Lakshmi Jewellers, FC Road, Pune",
-                      "person": "man in a blue helmet", "vehicle": "white Activa"},
-         "reason": "Matches the witness_statement record on the case file."},
-        {"claim_type": "VEHICLE", "status": "CONSISTENT",
-         "text": "The scooter's plate started MH12 AB.",
-         "entities": {"vehicle": "white Activa", "plate": "MH12 AB", "time_start": "22:15", "time_approx": True},
-         "reason": "Partly matches the registered plate MH12 AB 4521 of Suresh Deshmukh's Activa."},
-        {"claim_type": "ROUTE", "status": "PENDING",
-         "text": "The rider left the shop heading towards Kothrud.",
-         "entities": {"origin": "Shree Lakshmi Jewellers, FC Road, Pune", "destination": "Kothrud",
-                      "time_start": "22:17", "time_approx": True},
-         "reason": "Direction of travel only; no record establishes it either way."},
-    ],
-}
-
-
-def seed_witness_session(conn) -> None:
-    exists = conn.execute(
-        "SELECT 1 FROM statements st JOIN sessions se ON st.session_id = se.id "
-        "WHERE se.case_id = ? AND st.text = ?", (CASE_ID, WITNESS_SESSION["text"]),
-    ).fetchone()
-    if exists:
-        return
-    subject_id = conn.execute(
-        "SELECT id FROM subjects WHERE case_id = ? AND full_name = ?", (CASE_ID, WITNESS_SESSION["subject"]),
-    ).fetchone()[0]
-    session_id = conn.execute(
-        "INSERT INTO sessions (case_id, subject_id, started_at, ended_at) VALUES (?, ?, ?, ?)",
-        (CASE_ID, subject_id, WITNESS_SESSION["started_at"], WITNESS_SESSION["started_at"]),
-    ).lastrowid
-    statement_id = conn.execute(
-        "INSERT INTO statements (session_id, turn_index, text) VALUES (?, 0, ?)",
-        (session_id, WITNESS_SESSION["text"]),
-    ).lastrowid
-    for claim in WITNESS_SESSION["claims"]:
-        conn.execute(
-            "INSERT INTO claims (statement_id, claim_type, text, entities_json, status, reason) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (statement_id, claim["claim_type"], claim["text"], json.dumps(claim["entities"]),
-             claim["status"], claim["reason"]),
-        )
-
+INCIDENT = {"incident_start": "21:30", "incident_end": "22:30", "incident_date": "2026-11-21"}
 
 KNOWN_ROUTES = [
     ("FC Road, Pune", "Kothrud, Pune"),
@@ -193,18 +114,18 @@ OTHER_CASES = [
     },
 ]
 
-# On file for the suspect, so the checks can match the scooter in the witness record.
+# On file for the suspect: shown in the case file and passed to the checks with his name.
 SURESH_VEHICLE = {"vehicle": "white Honda Activa", "plate": "MH12 AB 4521", "relation": "Shop owner"}
 
 
 def _upsert_case(conn, case: dict) -> None:
     conn.execute(
-        "INSERT INTO cases (id, name, location, summary, incident_start, incident_end, status) "
-        "VALUES (:id, :name, :location, :summary, :incident_start, :incident_end, :status) "
+        "INSERT INTO cases (id, name, location, summary, incident_start, incident_end, incident_date, status) "
+        "VALUES (:id, :name, :location, :summary, :incident_start, :incident_end, :incident_date, :status) "
         "ON CONFLICT(id) DO UPDATE SET name = excluded.name, location = excluded.location, "
         "summary = excluded.summary, incident_start = excluded.incident_start, "
-        "incident_end = excluded.incident_end",
-        {"status": "Open", **case},
+        "incident_end = excluded.incident_end, incident_date = excluded.incident_date",
+        {"status": "Open", "incident_date": None, **case},
     )
 
 
@@ -216,18 +137,24 @@ def _add_people_and_evidence(conn, case_id: str, subjects: list, evidence: list)
             {**subject, "case_id": case_id},
         )
     for item in evidence:
+        found = conn.execute(
+            "SELECT id FROM evidence WHERE case_id = ? AND evidence_type = ? AND source = 'seed'",
+            (case_id, item["evidence_type"]),
+        ).fetchone()
+        if found is None:
+            conn.execute(
+                "INSERT INTO evidence (case_id, evidence_type, description, metadata_json, source) "
+                "VALUES (?, ?, ?, ?, 'seed')",
+                (case_id, item["evidence_type"], item["description"], json.dumps(item["metadata"])),
+            )
         conn.execute(
-            "INSERT OR IGNORE INTO evidence (case_id, evidence_type, description, metadata_json) "
-            "VALUES (?, ?, ?, ?)",
-            (case_id, item["evidence_type"], item["description"], json.dumps(item["metadata"])),
-        )
-        conn.execute(
-            "UPDATE evidence SET image = ? WHERE case_id = ? AND evidence_type = ?",
+            "UPDATE evidence SET image = ?, image_kind = 'illustration' "
+            "WHERE case_id = ? AND evidence_type = ? AND source = 'seed'",
             (EVIDENCE_IMAGES.get(item["evidence_type"]), case_id, item["evidence_type"]),
         )
         if item["evidence_type"] == "stolen_items":
             evidence_id = conn.execute(
-                "SELECT id FROM evidence WHERE case_id = ? AND evidence_type = 'stolen_items'", (case_id,)
+                "SELECT id FROM evidence WHERE case_id = ? AND evidence_type = 'stolen_items' AND source = 'seed'", (case_id,)
             ).fetchone()[0]
             for stolen in STOLEN_ITEMS:
                 conn.execute(
@@ -237,23 +164,32 @@ def _add_people_and_evidence(conn, case_id: str, subjects: list, evidence: list)
                 )
 
 
-def seed(with_witness_interview: bool = False) -> None:
-    """The demo starts with no interviews; the earlier witness interview is optional."""
+def seed() -> None:
+    """The demo starts with no interviews. The street cleaner is not seeded: he is added live."""
     db.init_db()
     with db.connect() as conn:
         # Upsert, not REPLACE: replacing the row would break the sessions that reference it.
         _upsert_case(conn, {**CASE, **INCIDENT})
         _add_people_and_evidence(conn, CASE_ID, SUBJECTS, EVIDENCE)
+        for subject in SUBJECTS:  # keep seeded people current on an existing database
+            conn.execute(
+                "UPDATE subjects SET role = :role, notes = :notes WHERE case_id = :case_id AND full_name = :full_name",
+                {**subject, "case_id": CASE_ID},
+            )
         conn.execute(
             "UPDATE subjects SET vehicle = :vehicle, plate = :plate, relation = :relation "
             "WHERE case_id = :case_id AND full_name = 'Suresh Deshmukh'",
             {**SURESH_VEHICLE, "case_id": CASE_ID},
         )
+        # The earlier story's paan-stall sighting is no longer part of the case.
+        conn.execute(
+            "DELETE FROM evidence WHERE case_id = ? AND source = 'seed' AND evidence_type = 'witness_statement' "
+            "AND id NOT IN (SELECT evidence_id FROM alibi_findings WHERE evidence_id IS NOT NULL)",
+            (CASE_ID,),
+        )
         for other in OTHER_CASES:
             _upsert_case(conn, other["case"])
             _add_people_and_evidence(conn, other["case"]["id"], other["subjects"], other["evidence"])
-        if with_witness_interview:
-            seed_witness_session(conn)
 
 
 def precompute_routes() -> None:
@@ -267,8 +203,6 @@ def precompute_routes() -> None:
 
 
 if __name__ == "__main__":
-    import sys
-
-    seed(with_witness_interview="--with-witness-interview" in sys.argv)
+    seed()
     print(f"Seeded case {CASE_ID} and {len(OTHER_CASES)} placeholder cases into {db.DB_PATH}")
     precompute_routes()

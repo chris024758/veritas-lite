@@ -16,14 +16,24 @@ import gemini_client
 import seed
 import timeline
 
-seed.seed(with_witness_interview=True)
-seed.seed(with_witness_interview=True)  # the witness session must not be duplicated
+seed.seed()
+seed.seed()  # must not duplicate anything
 CASE = "2026-PUN-0219"
 case = db.get_case(CASE)
-assert (case["incident_start"], case["incident_end"]) == ("21:30", "22:30")
+assert (case["incident_start"], case["incident_end"], case["incident_date"]) == ("21:30", "22:30", "2026-11-21")
+assert db.get_case_claims(CASE) == [], "the demo starts with no interviews"
+assert [e["evidence_type"] for e in case["evidence"]] == ["rear_shutter_lock", "display_cabinet", "insurance_claim", "stolen_items"]
+assert all(e["source"] == "seed" and e["image_kind"] == "illustration" for e in case["evidence"])
+print("seed: four on-site records, incident date, no interviews")
+
+# An earlier witness interview, built here (the seed no longer has one).
+witness_session = db.create_session(CASE, "Ramesh Kulkarni")
+witness_statement = db.add_statement(witness_session["id"], "earlier witness turn")
+db.add_claim(witness_statement["id"], "VEHICLE", "Saw a black SUV in the back lane",
+             {"vehicle": "black SUV", "location": "back lane", "time_start": "22:15"})
+db.add_claim(witness_statement["id"], "EVENT", "Was at a concert", {"time_start": "19:30"})
 prior = db.get_case_claims(CASE)
-assert len(prior) == 4 and {c["speaker"] for c in prior} == {"Ramesh Kulkarni"}, prior
-print("seed: one witness session with 4 claims, incident window set")
+assert len(prior) == 2 and {c["speaker"] for c in prior} == {"Ramesh Kulkarni"}, prior
 
 for banned in ["pune", "suresh", "ramesh", "kothrud", "hadapsar", "activa", "lakshmi", "mh12"]:
     for prompt in (alibi_check.INSTRUCTIONS, followups.INSTRUCTIONS):
@@ -44,8 +54,8 @@ evidence = case["evidence"]
 reply = {"findings": [
     {"claim": 1, "source": f"C{own_claim}", "severity": "high", "explanation": "time moved", "new_quote": "10:30", "prior_quote": "9:50"},
     {"claim": 1, "source": f"C{witness_claim['id']}", "severity": "HIGH", "explanation": "witness"},
-    {"claim": 1, "source": f"E{evidence[2]['id']}", "severity": "WEIRD", "explanation": "record"},
-    {"claim": 1, "source": f"E{evidence[2]['id']}", "severity": "HIGH", "explanation": "duplicate"},
+    {"claim": 1, "source": f"E{evidence[0]['id']}", "severity": "WEIRD", "explanation": "record"},
+    {"claim": 1, "source": f"E{evidence[0]['id']}", "severity": "HIGH", "explanation": "duplicate"},
     {"claim": 1, "source": "C999999", "severity": "HIGH", "explanation": "invented"},
     {"claim": 7, "source": f"C{own_claim}", "severity": "HIGH", "explanation": "no such claim"},
 ]}
@@ -59,10 +69,10 @@ gemini_client.generate = stub
 found = alibi_check.check([new_claim], "now", "Suresh Deshmukh (Suspect)", session, prior, evidence)
 print(json.dumps(found, indent=1))
 assert sent["prompt"].startswith("ALIBI CHECK") and sent["config"].response_mime_type == "application/json"
-assert f"C{own_claim} | Suresh Deshmukh (Suspect)" in sent["prompt"] and f"E{evidence[2]['id']} | witness_statement" in sent["prompt"]
+assert f"C{own_claim} | Suresh Deshmukh (Suspect)" in sent["prompt"] and f"E{evidence[0]['id']} | rear_shutter_lock" in sent["prompt"]
 assert [f["kind"] for f in found] == ["SELF", "WITNESS", "EVIDENCE"], "kinds come from who spoke, not the model"
 assert found[0]["severity"] == "HIGH" and found[2]["severity"] == "MEDIUM", "severity normalised"
-assert found[0]["other_claim_id"] == own_claim and found[2]["evidence_id"] == evidence[2]["id"]
+assert found[0]["other_claim_id"] == own_claim and found[2]["evidence_id"] == evidence[0]["id"]
 print("alibi check: SELF/WITNESS/EVIDENCE assigned, invented sources and duplicates dropped")
 
 assert alibi_check.check([], "x", "s", session, prior, evidence) == []
@@ -107,4 +117,21 @@ assert any(e["id"] == f"c{new_claim['id']}" for e in view["untimed"]), "no time,
 suspect_gaps = [g for g in view["gaps"] if g["lane"] == "s1"]
 assert suspect_gaps and suspect_gaps[0]["start"] == 1290, view["gaps"]
 print("timeline: suspect lane first, links, untimed tray, alibi gaps")
+# Records added during interviews: several of one type are allowed, each keeps its origin.
+first = db.add_evidence(CASE, "vehicle_sighting", "Black SUV", {"time": "22:15"}, source="statement",
+                        image="/generated/x.png", image_kind="generated", session_id=witness_session["id"],
+                        statement_id=witness_statement["id"], subject_id=witness_session["subject_id"])
+second = db.add_evidence(CASE, "vehicle_sighting", "Second sighting", {}, source="statement")
+on_file = [e for e in db.get_case(CASE)["evidence"] if e["evidence_type"] == "vehicle_sighting"]
+assert [e["id"] for e in on_file] == [first["id"], second["id"]], "no one-per-type rule"
+assert on_file[0]["provided_by"] == "Ramesh Kulkarni" and on_file[0]["image_kind"] == "generated"
+print("evidence: interview records kept with their source; two of one type allowed")
+
+import documents
+for raw, want in (("2026-11-21", "2026-11-21"), ("21/11/2026", "2026-11-21"), ("21 Nov 2026", "2026-11-21"),
+                  ("Nov 21", None), (None, None)):
+    assert documents.iso_date(raw) == want, (raw, documents.iso_date(raw))
+for banned in ["pune", "suresh", "ramesh", "concert", "lakshmi"]:
+    assert banned not in documents.INSTRUCTIONS.lower(), banned
+print("documents: dates normalised; instructions generic")
 print("PASS test_07_alibi_check")

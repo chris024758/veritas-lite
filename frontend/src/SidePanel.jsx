@@ -3,6 +3,7 @@ import { AlibiBanner, ThenVsNow } from "./AlibiAlert.jsx";
 import ClaimRows, { Tally } from "./ClaimsTable.jsx";
 import FollowUps from "./FollowUps.jsx";
 import MapsPanel from "./MapsPanel.jsx";
+import { assetUrl } from "./api.js";
 import { turnLabel } from "./findings.js";
 
 const routeChecks = (statement) =>
@@ -13,7 +14,34 @@ const routeChecks = (statement) =>
 
 // Everything the checks produce, kept out of the conversation: alerts, follow-ups,
 // the maps check, then-vs-now cards, and each claim's verdict.
-export default function SidePanel({ statements, sessionId, freshFindingIds, onPickQuestion, onJump }) {
+function AddedRecords({ statements, attachments }) {
+  const latest = statements[statements.length - 1];
+  const added = [
+    ...statements.flatMap((s) => (s.new_records ?? []).map((r) => ({ ...r, fresh: s === latest }))),
+    ...attachments.filter((a) => a.evidence).map((a, i, all) => ({ ...a.evidence, fresh: i === all.length - 1 })),
+  ];
+  if (added.length === 0) return null;
+  return (
+    <section className="side-section">
+      <h3 className="eyebrow">Added to the case file ({added.length})</h3>
+      {added.map((r) => (
+        <article key={r.id} className={`added-record ${r.fresh ? "fresh" : ""}`}>
+          {r.image && <img src={assetUrl(r.image)} alt="" />}
+          <div>
+            <p><span className="tag">{r.evidence_type.replaceAll("_", " ")}</span></p>
+            <p className="small">{r.description}</p>
+            <p className="muted small">
+              {r.image_kind === "generated" ? "Image generated from the description · not evidence"
+                : r.image_kind === "photo" ? "Uploaded photo" : ""}
+            </p>
+          </div>
+        </article>
+      ))}
+    </section>
+  );
+}
+
+export default function SidePanel({ statements, attachments = [], sessionId, freshFindingIds, onPickQuestion, onJump }) {
   const [highlighted, setHighlighted] = useState([]);
   const latest = statements[statements.length - 1];
   const findings = statements.flatMap((s) => s.alibi_findings ?? []);
@@ -43,6 +71,8 @@ export default function SidePanel({ statements, sessionId, freshFindingIds, onPi
       </div>
       <AlibiBanner findings={latest?.alibi_findings ?? []} pulseKey={latest?.id} />
       <FollowUps questions={latest?.followups} error={latest?.followup_error} onPick={onPickQuestion} onHover={setHighlighted} />
+
+      <AddedRecords statements={statements} attachments={attachments} />
 
       {maps.length > 0 && (
         <section className="side-section">

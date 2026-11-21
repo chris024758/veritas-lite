@@ -52,7 +52,7 @@ export function ThenVsNow({ finding, sessionId, fresh, onJump, id }) {
         <div className="tvn-side now">
           <p className="tvn-who">
             {finding.claim.speaker}
-            <span>{turnLabel(finding.claim.turn_index)} · now</span>
+            <span>{turnLabel(finding.claim.turn_index)} · {finding.claim.session_id === sessionId ? "now" : "earlier interview"}</span>
           </p>
           <p className="tvn-text"><Quote text={finding.claim.text} quote={finding.new_quote} /></p>
         </div>
