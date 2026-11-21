@@ -1,5 +1,6 @@
 """FastAPI backend. Run seed.py once first, then: uvicorn main:app --port 8018"""
 import os
+import re
 import tempfile
 import uuid
 from pathlib import Path
@@ -128,10 +129,37 @@ def _alibi_check(claims: list[dict], text: str, statement_id: int, session: dict
     statement's verdicts."""
     try:
         prior = db.get_case_claims(session["case_id"], exclude_statement_id=statement_id)
-        evidence = db.get_case(session["case_id"])["evidence"]
+        evidence = [record for record in db.get_case(session["case_id"])["evidence"]
+                    if record["source"] != "upload"]
         return alibi_check.check(claims, text, speaker, session, prior, evidence), None
     except (errors.APIError, gemini_client.GeminiNotConfigured, ValueError) as exc:
         return [], f"Alibi check did not complete: {exc}"
+
+
+def _keep_records(verified: dict, stored: list[dict], session: dict, statement_id: int) -> list[dict]:
+    """Turn the model's record PROPOSALS into case records, under the program's rules: a suspect
+    cannot add records, each must come from a real claim of this statement, and an image is
+    attached only from a real generate_image call, marked as generated so nothing treats it as
+    proof."""
+    subject = db.get_subject(session["subject_id"]) if session["subject_id"] is not None else None
+    if subject is None or subject["role"] == "Suspect":
+        return []
+    images = {c["id"]: c["result"].get("image_url") for c in verified["tool_calls"]
+              if c["name"] == "generate_image" and isinstance(c.get("result"), dict)}
+    kept = []
+    for proposal in verified["records"][:3]:
+        if not 1 <= proposal["claim"] <= len(stored) or not proposal["description"].strip():
+            continue
+        record_type = re.sub(r"[^a-z0-9_]+", "_", proposal["record_type"].strip().lower()).strip("_") or "observation"
+        image = images.get(proposal.get("image_call"))
+        metadata = {k: v for k, v in (proposal.get("metadata") or {}).items() if v not in (None, "", [])}
+        metadata.setdefault("reported_by", subject["full_name"])
+        kept.append(db.add_evidence(
+            session["case_id"], record_type, proposal["description"].strip(), metadata,
+            source="statement", image=image, image_kind="generated" if image else None,
+            session_id=session["id"], statement_id=statement_id, subject_id=subject["id"],
+        ))
+    return kept
 
 
 def run_pipeline(session: dict, text: str) -> dict:
@@ -153,16 +181,19 @@ def run_pipeline(session: dict, text: str) -> dict:
         for claim in claims
     ]
     with ThreadPoolExecutor(max_workers=2) as pool:
-        verifying = pool.submit(verification.verify_statement, claims, text, statement["id"], session["case_id"], speaker)
+        verifying = pool.submit(verification.verify_statement_full, claims, text, statement["id"], session["case_id"], speaker)
         checking = pool.submit(_alibi_check, stored, text, statement["id"], session, speaker)
-        outcomes = verifying.result()
+        verified = verifying.result()
         found, alibi_error = checking.result()
+    outcomes = verified["results"]
 
     for claim, outcome in zip(stored, outcomes):
         db.finish_claim(claim["id"], outcome["status"], outcome["reason"], outcome["details"])
     for finding in found:
         db.add_finding(session["case_id"], statement["id"], **finding)
         db.flag_for_finding(finding["claim_id"], f"Alibi check: {finding['explanation']}")
+
+    new_records = _keep_records(verified, stored, session, statement["id"])
 
     results = db.get_claims(statement["id"])
     findings = db.get_findings(statement_id=statement["id"])
@@ -173,7 +204,7 @@ def run_pipeline(session: dict, text: str) -> dict:
     except (errors.APIError, gemini_client.GeminiNotConfigured, ValueError) as exc:
         followup_error = f"Follow-up questions could not be generated: {exc}"
     return {**statement, "claims": results, "alibi_findings": findings, "followups": followup_list,
-            "alibi_error": alibi_error, "followup_error": followup_error}
+            "new_records": new_records, "alibi_error": alibi_error, "followup_error": followup_error}
 
 
 @app.post("/sessions/start")
@@ -192,7 +223,7 @@ def start_session(body: StartSession):
 
 @app.post("/sessions/{session_id}/attachments")
 def add_attachment(session_id: int, image: UploadFile, caption: str | None = Form(None)):
-    """Save an image the investigator adds to the interview."""
+    """Save the image on the interview and file it as case evidence."""
     session = _require_session(session_id)
     if session["ended_at"]:
         raise HTTPException(409, "this interview has ended")
@@ -203,10 +234,14 @@ def add_attachment(session_id: int, image: UploadFile, caption: str | None = For
     if len(data) > MAX_UPLOAD_BYTES:
         raise HTTPException(413, "images must be 10 MB or smaller")
     filename = f"{uuid.uuid4().hex}{suffix}"
-    (UPLOAD_DIR / filename).write_bytes(data)
-    record = db.add_attachment(session_id, db.count_statements(session_id), filename,
-                               image.filename, (caption or "").strip() or None)
-    return {**record, "url": f"/uploads/{filename}"}
+    path = UPLOAD_DIR / filename
+    caption = (caption or "").strip() or None
+    try:
+        path.write_bytes(data)
+        return db.add_attachment(session, filename, image.filename, caption)
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
 
 
 @app.post("/sessions/{session_id}/attachments/{attachment_id}/extract")

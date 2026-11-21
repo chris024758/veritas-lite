@@ -10,7 +10,10 @@ const initials = (name) => name.split(" ").map((p) => p[0]).join("").slice(0, 2)
 export function evidenceCards(caseData, findings) {
   return caseData.evidence.map((e) => ({
     key: `e${e.id}`, kind: "evidence", evidence_type: e.evidence_type, title: label(e.evidence_type),
-    subtitle: e.items?.length ? `${e.items.length} items` : e.metadata.time ? `Record · ${e.metadata.time}` : "Record",
+    subtitle: e.source === "statement" ? `From ${e.provided_by ? `${e.provided_by}'s` : "an"} interview${e.metadata.time ? ` · ${e.metadata.time}` : ""}`
+      : e.source === "upload" ? `Shown by ${e.provided_by ?? "a witness"}`
+        : e.items?.length ? `${e.items.length} items` : e.metadata.time ? `Record · ${e.metadata.time}` : "Record",
+    source: e.source, imageKind: e.image_kind, providedBy: e.provided_by,
     detail: e.description, metadata: e.metadata, image: e.image, items: e.items ?? [], timelineId: `e${e.id}`,
     linked: findings.filter((f) => f.source.type === "evidence" && f.source.id === e.id),
   }));

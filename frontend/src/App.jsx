@@ -140,6 +140,7 @@ function Workspace() {
       setFreshFindingIds((result.alibi_findings ?? []).map((f) => f.id));
       setAsking(null);
       refreshTimeline(caseId);
+      if (result.new_records?.length) refreshCase(caseId);
       return true;
     } catch (e) {
       setError(e.message);
@@ -189,6 +190,21 @@ function Workspace() {
     }
     setTimelineFocus(source.type === "claim" ? `c${source.id}` : `e${source.id}`);
     navigate(casePath(caseId, "timeline"));
+  }
+
+  function attached(upload) {
+    setInterview((iv) => {
+      if (iv?.sessionId !== upload.session_id) return iv;
+      const exists = iv.attachments.some((image) => image.id === upload.id);
+      const attachments = exists
+        ? iv.attachments.map((image) => image.id === upload.id ? { ...image, ...upload } : image)
+        : [...iv.attachments, upload];
+      return { ...iv, attachments };
+    });
+    if (upload.evidence && !upload.extraction) {
+      refreshCase(caseId);
+      refreshTimeline(caseId);
+    }
   }
 
   const onSnapshot = useCallback((shot) => setSnapshot(shot), []);
@@ -283,14 +299,7 @@ function Workspace() {
                   sessionId={active.sessionId}
                   statements={active.statements}
                   attachments={active.attachments}
-                  onAttached={(a) => setInterview((iv) => {
-                    if (iv?.sessionId !== a.session_id) return iv;
-                    const exists = iv.attachments.some((image) => image.id === a.id);
-                    const attachments = exists
-                      ? iv.attachments.map((image) => image.id === a.id ? a : image)
-                      : [...iv.attachments, a];
-                    return { ...iv, attachments };
-                  })}
+                  onAttached={attached}
                   asking={asking}
                   onClearAsking={() => setAsking(null)}
                   onSend={send}

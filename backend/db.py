@@ -1,5 +1,6 @@
 """SQLite storage. Structured-field matching only: no FTS5, BM25 or embeddings."""
 import json
+from contextlib import nullcontext
 import os
 import sqlite3
 from datetime import datetime, timezone
@@ -53,13 +54,21 @@ CREATE TABLE IF NOT EXISTS claims (
     reason TEXT,
     details_json TEXT NOT NULL DEFAULT '{}'
 );
+-- Case records. Seeded ones, ones proposed from a witness's statement, and uploaded proof.
+-- A case can hold several records of one type (two sightings, two tickets).
 CREATE TABLE IF NOT EXISTS evidence (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     case_id TEXT NOT NULL REFERENCES cases(id),
     evidence_type TEXT NOT NULL,
     description TEXT NOT NULL,
     metadata_json TEXT NOT NULL DEFAULT '{}',
-    UNIQUE (case_id, evidence_type)
+    image TEXT,
+    image_kind TEXT,           -- illustration | generated | photo
+    source TEXT NOT NULL DEFAULT 'seed',  -- seed | statement | upload
+    session_id INTEGER REFERENCES sessions(id),
+    statement_id INTEGER REFERENCES statements(id),
+    subject_id INTEGER REFERENCES subjects(id),
+    created_at TEXT
 );
 -- Alibi-check findings: a new claim clashing with an earlier claim (SELF or WITNESS) or with a
 -- case-file record (EVIDENCE). Exactly one of other_claim_id / evidence_id is set.
@@ -95,7 +104,8 @@ CREATE TABLE IF NOT EXISTS attachments (
     filename TEXT NOT NULL,
     original_name TEXT,
     caption TEXT,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    evidence_id INTEGER REFERENCES evidence(id)
 );
 -- Not one of the six domain tables: the geocode/route cache from the PRD's risk table.
 CREATE TABLE IF NOT EXISTS geo_cache (
@@ -125,8 +135,40 @@ MIGRATIONS = [
     ("subjects", "relation", "TEXT"),
     ("cases", "status", "TEXT NOT NULL DEFAULT 'Open'"),
     ("evidence", "image", "TEXT"),
+    ("evidence", "image_kind", "TEXT"),
+    ("evidence", "source", "TEXT NOT NULL DEFAULT 'seed'"),
+    ("evidence", "session_id", "INTEGER REFERENCES sessions(id)"),
+    ("evidence", "statement_id", "INTEGER REFERENCES statements(id)"),
+    ("evidence", "subject_id", "INTEGER REFERENCES subjects(id)"),
+    ("evidence", "created_at", "TEXT"),
+    ("cases", "incident_date", "TEXT"),
+    ("attachments", "evidence_id", "INTEGER REFERENCES evidence(id)"),
     ("attachments", "extraction_json", "TEXT"),
 ]
+
+EVIDENCE_COLUMNS = ("id, case_id, evidence_type, description, metadata_json, image, image_kind, "
+                    "source, session_id, statement_id, subject_id, created_at")
+
+
+def _drop_evidence_unique() -> None:
+    """Older databases have UNIQUE (case_id, evidence_type). SQLite cannot drop a constraint,
+    so the table is rebuilt with the same rows and ids. Foreign keys must be off for the swap,
+    and that pragma only works outside a transaction, hence the separate connection."""
+    conn = sqlite3.connect(DB_PATH, isolation_level=None)
+    try:
+        row = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'evidence'").fetchone()
+        if not row or "UNIQUE" not in row[0]:
+            return
+        create = "CREATE TABLE evidence_new (" + SCHEMA.split("CREATE TABLE IF NOT EXISTS evidence (")[1].split(");")[0] + ");"
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.execute("BEGIN")
+        conn.execute(create)
+        conn.execute(f"INSERT INTO evidence_new ({EVIDENCE_COLUMNS}) SELECT {EVIDENCE_COLUMNS} FROM evidence")
+        conn.execute("DROP TABLE evidence")
+        conn.execute("ALTER TABLE evidence_new RENAME TO evidence")
+        conn.execute("COMMIT")
+    finally:
+        conn.close()
 
 VALID_ROLES = {"Suspect", "Witness", "Victim", "Other"}
 SUBJECT_FIELDS = ("full_name", "role", "notes", "phone", "vehicle", "plate", "relation")
@@ -139,6 +181,7 @@ def init_db() -> None:
             existing = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
             if column not in existing:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+    _drop_evidence_unique()
 
 
 def _claim_row(row: sqlite3.Row) -> dict:
@@ -160,6 +203,7 @@ def get_case(case_id: str) -> dict | None:
         evidence = conn.execute(
             "SELECT * FROM evidence WHERE case_id = ? ORDER BY id", (case_id,)
         ).fetchall()
+        people = {s["id"]: s["full_name"] for s in subjects}
         items_by = {}
         for item in conn.execute(
             "SELECT i.* FROM evidence_items i JOIN evidence e ON i.evidence_id = e.id "
@@ -170,7 +214,9 @@ def get_case(case_id: str) -> dict | None:
         **dict(case),
         "subjects": [dict(s) for s in subjects],
         "evidence": [
-            {**{k: e[k] for k in ("id", "case_id", "evidence_type", "description", "image")},
+            {**{k: e[k] for k in ("id", "case_id", "evidence_type", "description", "image", "image_kind",
+                                  "source", "session_id", "statement_id", "subject_id", "created_at")},
+             "provided_by": people.get(e["subject_id"]),
              "metadata": json.loads(e["metadata_json"]),
              "items": [dict(i) for i in items_by.get(e["id"], [])]}
             for e in evidence
@@ -336,16 +382,27 @@ def set_followups(statement_id: int, followups: list[dict]) -> None:
                      (json.dumps(followups), statement_id))
 
 
-def add_attachment(session_id: int, after_turn: int, filename: str, original_name: str | None,
-                   caption: str | None) -> dict:
+def add_attachment(session: dict, filename: str, original_name: str | None, caption: str | None) -> dict:
+    """File the image and link its attachment in a single transaction."""
+    session_id = session["id"]
+    url = f"/uploads/{filename}"
+    metadata = {"filename": original_name} if original_name else {}
+    if caption:
+        metadata["caption"] = caption
     with connect() as conn:
+        evidence = add_evidence(
+            session["case_id"], "uploaded_image", caption or original_name or "Uploaded image", metadata,
+            source="upload", image=url, image_kind="photo", session_id=session_id,
+            subject_id=session["subject_id"], connection=conn,
+        )
+        after_turn = conn.execute("SELECT COUNT(*) FROM statements WHERE session_id = ?", (session_id,)).fetchone()[0]
         cur = conn.execute(
-            "INSERT INTO attachments (session_id, after_turn, filename, original_name, caption, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (session_id, after_turn, filename, original_name, caption, datetime.now(timezone.utc).isoformat()),
+            "INSERT INTO attachments (session_id, after_turn, filename, original_name, caption, created_at, evidence_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (session_id, after_turn, filename, original_name, caption, datetime.now(timezone.utc).isoformat(), evidence["id"]),
         )
         row = conn.execute("SELECT * FROM attachments WHERE id = ?", (cur.lastrowid,)).fetchone()
-    return _attachment_row(row)
+    return {**_attachment_row(row), "url": url, "evidence": evidence}
 
 
 def _attachment_row(row: sqlite3.Row) -> dict:
@@ -367,6 +424,40 @@ def save_attachment_extraction(session_id: int, attachment_id: int, result: dict
     with connect() as conn:
         conn.execute("UPDATE attachments SET extraction_json = ? WHERE session_id = ? AND id = ?",
                      (json.dumps(result), session_id, attachment_id))
+
+
+def add_evidence(case_id: str, evidence_type: str, description: str, metadata: dict, *,
+                 source: str, image: str | None = None, image_kind: str | None = None,
+                 session_id: int | None = None, statement_id: int | None = None,
+                 subject_id: int | None = None, connection: sqlite3.Connection | None = None) -> dict:
+    """A record from a witness's statement or an uploaded image."""
+    with (connect() if connection is None else nullcontext(connection)) as conn:
+        cur = conn.execute(
+            """INSERT INTO evidence (case_id, evidence_type, description, metadata_json, image, image_kind,
+                   source, session_id, statement_id, subject_id, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (case_id, evidence_type, description, json.dumps(metadata), image, image_kind, source,
+             session_id, statement_id, subject_id, datetime.now(timezone.utc).isoformat()),
+        )
+        row = conn.execute("SELECT * FROM evidence WHERE id = ?", (cur.lastrowid,)).fetchone()
+    record = dict(row)
+    record["metadata"] = json.loads(record.pop("metadata_json"))
+    return record
+
+
+def get_claim_context(claim_id: int) -> dict | None:
+    """One claim with who said it, in which interview and turn."""
+    with connect() as conn:
+        row = conn.execute(CLAIM_CONTEXT_SQL + " WHERE c.id = ?", (claim_id,)).fetchone()
+    return _claim_row(row) if row else None
+
+
+def latest_statement_id(session_id: int) -> int | None:
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT id FROM statements WHERE session_id = ? ORDER BY turn_index DESC LIMIT 1", (session_id,)
+        ).fetchone()
+    return row["id"] if row else None
 
 
 def get_attachments(session_id: int) -> list[dict]:
@@ -467,6 +558,7 @@ def get_findings(statement_id: int | None = None, session_id: int | None = None,
                 finding["source"] = {
                     "type": "evidence", "id": ev["id"], "evidence_type": ev["evidence_type"],
                     "text": ev["description"], "metadata": json.loads(ev["metadata_json"]),
+                    "image": ev["image"], "image_kind": ev["image_kind"], "record_source": ev["source"],
                     "speaker": "Case file", "speaker_role": "Evidence",
                 }
             findings.append(finding)

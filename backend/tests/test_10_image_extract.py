@@ -78,6 +78,55 @@ class ImageExtractionTests(unittest.TestCase):
                 self.assertIs(response.json()["event_verification"]["verified"], expected)
                 self.assertIn(event["date"], search.call_args.args[0])
 
+    def test_attachment_is_filed_and_verified_without_using_it_in_statement_checks(self):
+        from fastapi.testclient import TestClient
+        import db
+        import main
+        import seed
+        from tools.case_file import search_case_file
+
+        event = {"title": "Demo concert", "date": "22 November 2026"}
+        verdict = {"verified": False, "reason": "The listing shows 21 November.", "sources": []}
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+            path = Path(directory)
+            with patch.object(db, "DB_PATH", str(path / "test.db")), patch.object(main, "UPLOAD_DIR", path):
+                seed.seed()
+                client = TestClient(main.app)
+                started = client.post("/sessions/start", json={"case_id": seed.CASE_ID, "subject_name": "Ramesh Kulkarni"})
+                started.raise_for_status()
+                session = started.json()["session_id"]
+                endpoint = f"/sessions/{session}/attachments"
+                with patch("main.gemini_client.generate") as gemini:
+                    uploaded = client.post(endpoint, files={"image": ("ticket.png", PNG, "image/png")},
+                                           data={"caption": "Demo concert ticket"})
+                    uploaded.raise_for_status()
+                    gemini.assert_not_called()
+                attachment = uploaded.json()
+                evidence = attachment["evidence"]
+                self.assertEqual(attachment["evidence_id"], evidence["id"])
+                self.assertIn(evidence["id"], {e["id"] for e in client.get(f"/cases/{seed.CASE_ID}").json()["evidence"]})
+                self.assertFalse(search_case_file("Demo concert ticket", seed.CASE_ID)["evidence"])
+                with patch("main.alibi_check.check", return_value=[]) as check:
+                    main._alibi_check([], "A statement", -1, db.get_session_row(session), "Ramesh")
+                    records = check.call_args.args[-1]
+                    self.assertTrue(records)
+                    self.assertNotIn(evidence["id"], {record["id"] for record in records})
+                with (
+                    patch("main.extract_image", return_value={**RESULT, "event": event}) as extract,
+                    patch("main.verify_event", return_value=verdict) as verify,
+                ):
+                    url = f"{endpoint}/{attachment['id']}/extract"
+                    response = client.post(url)
+                    response.raise_for_status()
+                    self.assertEqual(response.json()["event_verification"], verdict)
+                    self.assertEqual(client.post(url).json(), response.json())
+                    extract.assert_called_once_with(PNG, "image/png")
+                    verify.assert_called_once_with(event)
+                saved = db.get_attachments(session)
+                self.assertEqual(len(saved), 1)
+                self.assertEqual(saved[0]["extraction"], response.json())
+                self.assertEqual(saved[0]["evidence_id"], evidence["id"])
+
 
 if __name__ == "__main__":
     unittest.main()

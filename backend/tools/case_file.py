@@ -48,7 +48,8 @@ def search_case_file(query: str, case_id: str, exclude_statement_id: int | None 
 
         where, params = _like_clause(["evidence_type", "description", "metadata_json"], terms)
         evidence = conn.execute(
-            f"SELECT evidence_type, description, metadata_json FROM evidence WHERE case_id = ? AND ({where})",
+            f"SELECT evidence_type, description, metadata_json FROM evidence "
+            f"WHERE case_id = ? AND source != 'upload' AND ({where})",
             [case_id, *params],
         ).fetchall()
 

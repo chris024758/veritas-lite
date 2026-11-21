@@ -724,6 +724,14 @@ mark.clash { padding: 0 3px; border-radius: 4px; background: var(--alert); color
 }
 .ecard.has-img:hover .ecard-img, .ecard.has-img:focus-within .ecard-img { opacity: 0.6; }
 .ecard.has-img .ebox { z-index: 2; }
+
+/* Records an interview added to the case file */
+.added-record { display: flex; gap: 10px; padding: 10px; border-radius: 12px; background: rgba(0, 0, 0, 0.18); border: 1px solid var(--line-strong); }
+.added-record.fresh { border-color: var(--text); animation: slide-in 0.45s ease-out; }
+.added-record img { width: 84px; height: 64px; object-fit: cover; border-radius: 8px; flex: none; }
+.added-record > div { display: grid; gap: 4px; min-width: 0; }
+.read-as { display: block; margin-top: 4px; font-size: 12px; color: var(--text); }
+
 .image-gen-panel form { display: grid; gap: 0.65rem; margin: 1.25rem 0; }
 .image-gen-panel label { font-weight: 600; }
 .image-gen-panel textarea { width: 100%; box-sizing: border-box; resize: vertical; padding: 0.75rem; border: 1px solid #9ca3af; border-radius: 8px; font: inherit; }

@@ -16,7 +16,9 @@ export default function EvidenceModal({ item, onClose, onShowOnTimeline }) {
         onClick={(e) => e.stopPropagation()}>
         <header className="em-head">
           <div>
-            <p className="eyebrow">{item.kind === "subject" ? item.subtitle : "Evidence record"}</p>
+            <p className="eyebrow">{item.kind === "subject" ? item.subtitle
+              : item.source === "statement" ? `Added from ${item.providedBy}'s interview`
+                : item.source === "upload" ? `Uploaded by ${item.providedBy}` : "Evidence record"}</p>
             <h2 className="capitalize">{item.title}</h2>
           </div>
           <button type="button" className="icon-btn" onClick={onClose} aria-label="Close" autoFocus>×</button>
@@ -26,7 +28,9 @@ export default function EvidenceModal({ item, onClose, onShowOnTimeline }) {
           {item.image && (
             <figure className="em-figure">
               <img src={assetUrl(item.image)} alt={`Illustration: ${item.title}`} />
-              <figcaption>Illustration for the demo, not a real photograph</figcaption>
+              <figcaption>{item.imageKind === "generated" ? "Generated from the witness's description · illustrative only, not evidence"
+                : item.imageKind === "photo" ? "Photo uploaded during the interview"
+                  : "Illustration for the demo, not a real photograph"}</figcaption>
             </figure>
           )}
           <div className="em-text">
