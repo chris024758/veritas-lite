@@ -90,7 +90,7 @@ responses_sent = [p.function_response.response for p in seen[1][0][2].parts]
 assert [r["call_id"] for r in responses_sent] == [1, 2]
 for _, config in seen:
     assert {d.name for d in config.tools[0].function_declarations} == {
-        "search_case_file", "check_route", "web_search", "generate_image"}
+        "search_case_file", "check_route", "web_search"}
 
 # 2. prose instead of JSON: one tools-off retry
 seen = scripted([response(text("Looks fine.")), response(text(

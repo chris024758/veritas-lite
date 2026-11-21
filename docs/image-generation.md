@@ -5,7 +5,7 @@
 | Model | Black Forest Labs FLUX.1 Schnell |
 | Model ID | `@cf/black-forest-labs/flux-1-schnell` |
 | Inference provider | Cloudflare Workers AI, via its REST API |
-| Local API | `POST /tools/generate-image` with a JSON `description` |
+| Prompt source | Gemini, using the submitted interview statement |
 
 ## Local setup
 
@@ -17,8 +17,9 @@
    CLOUDFLARE_API_TOKEN=your_api_token
    ```
 
-3. Restart the backend. In the frontend, open **Image generator**, enter a description, and select **Generate image**.
+3. Restart the backend. Submit a statement with a visual observation. When the claim finishes checking, the suggested prompt appears under **Image suggestions** near the top of **Findings**.
+4. Choose **Generate preview**, then **Approve illustration** or **Discard preview**. Approval saves the illustration with the claim or, when the statement produced a matching case record, with that record.
 
-The backend sends the description to Cloudflare as the model prompt, saves the returned JPEG in `backend/generated/`, and serves it at `/generated/<filename>.jpg`. If either credential is missing, the panel shows a placeholder. If Cloudflare rejects the request, the panel reports an error.
+The backend sends the saved prompt to Cloudflare and serves the resulting JPEG from `/generated/`. The case file only displays approved images, labeled as generated illustrations. Provider or configuration errors appear on the record's review card.
 
 Workers AI has a shared daily free allowance. Check the current limits before relying on it for repeated demos. [Cloudflare pricing](https://developers.cloudflare.com/workers-ai/platform/pricing/)
