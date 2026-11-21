@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300"><defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#424769"/><stop offset="1" stop-color="#2d3250"/></linearGradient><linearGradient id="gold" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffe3a3"/><stop offset=".5" stop-color="#e8b04a"/><stop offset="1" stop-color="#a8741f"/></linearGradient><linearGradient id="steel" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#e6e8f2"/><stop offset="1" stop-color="#8c93c4"/></linearGradient></defs><rect width="400" height="300" fill="url(#bg)"/>
+<rect x="60" y="40" width="190" height="230" rx="6" fill="#f4f5fa"/>
+<rect x="78" y="80" width="150" height="6" rx="3" fill="#8c93c4"/>
+<rect x="78" y="100" width="150" height="6" rx="3" fill="#8c93c4"/>
+<rect x="78" y="120" width="150" height="6" rx="3" fill="#8c93c4"/>
+<rect x="78" y="140" width="150" height="6" rx="3" fill="#8c93c4"/>
+<rect x="78" y="160" width="150" height="6" rx="3" fill="#8c93c4"/>
+<rect x="78" y="180" width="150" height="6" rx="3" fill="#8c93c4"/>
+<rect x="78" y="200" width="150" height="6" rx="3" fill="#8c93c4"/>
+<rect x="78" y="56" width="90" height="10" rx="3" fill="#2d3250"/>
+<path d="M90 238 q20 -18 40 0 t40 0" fill="none" stroke="#2d3250" stroke-width="2"/>
+<circle cx="300" cy="120" r="34" fill="#676f9d"/><circle cx="300" cy="108" r="14" fill="#e6e8f2"/><path d="M276 146 a24 20 0 0 1 48 0" fill="#e6e8f2"/>
+<text x="300" y="185" text-anchor="middle" font-family="monospace" font-size="16" fill="#f9b17a">22:15</text>
+<text x="300" y="205" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#ffffff">white scooter seen</text>
+<text x="390" y="290" text-anchor="end" font-family="monospace" font-size="11" fill="#b9bedb" opacity=".7">illustration · witness statement</text></svg>

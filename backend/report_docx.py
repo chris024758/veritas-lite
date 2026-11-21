@@ -1,0 +1,131 @@
+"""The interview report as a Word document, built in memory from the stored report dict."""
+import io
+
+from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+from docx.shared import Pt, RGBColor
+
+NAVY = RGBColor(0x2D, 0x32, 0x50)
+MUTED = RGBColor(0x67, 0x6F, 0x9D)
+PEACH_HEX = "F9B17A"
+KIND_LABEL = {"SELF": "Own statement", "WITNESS": "Witness", "EVIDENCE": "Evidence"}
+
+
+def _shade(run, fill: str) -> None:
+    props = run._r.get_or_add_rPr()
+    shd = OxmlElement("w:shd")
+    shd.set(qn("w:val"), "clear")
+    shd.set(qn("w:color"), "auto")
+    shd.set(qn("w:fill"), fill)
+    props.append(shd)
+
+
+def _quoted(paragraph, text: str, quote: str | None) -> None:
+    """The text with the clashing words shaded peach, as in the app."""
+    at = text.lower().find(quote.lower()) if quote else -1
+    if at < 0:
+        paragraph.add_run(text)
+        if quote:
+            run = paragraph.add_run(f" [{quote}]")
+            _shade(run, PEACH_HEX)
+        return
+    paragraph.add_run(text[:at])
+    run = paragraph.add_run(text[at:at + len(quote)])
+    run.bold = True
+    _shade(run, PEACH_HEX)
+    paragraph.add_run(text[at + len(quote):])
+
+
+def _heading(doc, text: str, level: int = 1) -> None:
+    heading = doc.add_heading(text, level=level)
+    for run in heading.runs:
+        run.font.color.rgb = NAVY
+
+
+def _small(paragraph, text: str) -> None:
+    run = paragraph.add_run(text)
+    run.font.size = Pt(9)
+    run.font.color.rgb = MUTED
+
+
+def build(report: dict) -> bytes:
+    doc = Document()
+    doc.styles["Normal"].font.name = "Calibri"
+    doc.styles["Normal"].font.size = Pt(10.5)
+
+    kicker = doc.add_paragraph()
+    _small(kicker, "VERITAS · INTERVIEW REPORT")
+    title = doc.add_heading(report["case"]["name"], level=0)
+    for run in title.runs:
+        run.font.color.rgb = NAVY
+    subject = report.get("subject")
+    meta = doc.add_paragraph()
+    meta.add_run(f"Case {report['case']['id']} · {report['case']['location']}\n")
+    meta.add_run("Subject: ").bold = True
+    meta.add_run(f"{subject['full_name']} ({subject['role']})" if subject else "Unknown")
+    meta.add_run(f"\nStarted {report['started_at']} · Ended {report['ended_at']}")
+
+    _heading(doc, "Summary")
+    summary = report.get("summary")
+    if summary:
+        doc.add_paragraph(summary["overview"])
+        for label, key in (("Key findings", "key_findings"), ("Unresolved", "unresolved"), ("Next steps", "next_steps")):
+            if summary.get(key):
+                doc.add_paragraph(label).runs[0].bold = True
+                for item in summary[key]:
+                    doc.add_paragraph(item, style="List Bullet")
+    else:
+        doc.add_paragraph(report.get("summary_error") or "No summary.")
+    tally = ", ".join(f"{n} {status.lower()}" for status, n in report["tally"].items() if n)
+    if tally:
+        _small(doc.add_paragraph(), f"Claims: {tally}")
+
+    findings = report["alibi_findings"]
+    _heading(doc, f"Alibi-check findings ({len(findings)})")
+    if not findings:
+        doc.add_paragraph("None.")
+    for number, f in enumerate(findings, start=1):
+        head = doc.add_paragraph()
+        head.add_run(f"{number}. {KIND_LABEL[f['kind']]} · {f['severity']} · T{f['claim']['turn_index'] + 1:02d}").bold = True
+        said = doc.add_paragraph()
+        said.add_run("Said: ").bold = True
+        _quoted(said, f["claim"]["text"], f["new_quote"])
+        source = doc.add_paragraph()
+        source.add_run(("Record" if f["source"]["type"] == "evidence" else f["source"]["speaker"]) + ": ").bold = True
+        _quoted(source, f["source"]["text"], f["prior_quote"])
+        _small(doc.add_paragraph(), f["explanation"])
+
+    _heading(doc, "Claims and verdicts")
+    for statement in report["statements"]:
+        turn = doc.add_paragraph()
+        turn.add_run(f"T{statement['turn_index'] + 1:02d}  ").bold = True
+        turn.add_run(statement["text"])
+        table = doc.add_table(rows=0, cols=2)
+        table.style = "Light Grid Accent 1"
+        for claim in statement["claims"]:
+            cells = table.add_row().cells
+            cells[0].text = claim["status"]
+            cells[1].text = claim["text"]
+            _small(cells[1].add_paragraph(), claim["reason"] or "")
+        doc.add_paragraph()
+
+    if report.get("attachments"):
+        _heading(doc, f"Images added during the interview ({len(report['attachments'])})")
+        for a in report["attachments"]:
+            label = a["caption"] or a["original_name"] or "Image"
+            doc.add_paragraph(f"{label} (after turn {a['after_turn']})", style="List Bullet")
+
+    if report.get("open_followups"):
+        _heading(doc, "Open follow-ups")
+        for q in report["open_followups"]:
+            doc.add_paragraph(q["question"], style="List Bullet")
+
+    foot = doc.add_paragraph()
+    foot.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    _small(foot, "Generated by VERITAS-Lite. Illustrative images are excluded; verdicts cite the tool results they relied on.")
+
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    return buffer.getvalue()

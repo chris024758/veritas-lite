@@ -23,11 +23,18 @@ ALIBI_CLAIMS = [
     {"claim_type": "TIMELINE", "text": "Was at a cousin's housewarming in Hadapsar.",
      "entities": {"location": "Hadapsar"}},
     {"claim_type": "ROUTE", "text": "Rode from Hadapsar to the shop, leaving around 9 and reaching around 9:40.",
-     "entities": {"origin": "Hadapsar", "destination": "the shop", "claimed_minutes": 40}},
+     "entities": {"origin": "Hadapsar", "destination": "the shop", "claimed_minutes": 40,
+                  "time_start": "21:00", "time_end": "21:40", "time_approx": True}},
     {"claim_type": "ROUTE", "text": "Went from the shop to home in Kothrud between 9:40 and 9:50.",
-     "entities": {"origin": "the shop", "destination": "Kothrud", "claimed_minutes": 10}},
+     "entities": {"origin": "the shop", "destination": "Kothrud", "claimed_minutes": 10,
+                  "time_start": "21:40", "time_end": "21:50"}},
     {"claim_type": "TIMELINE", "text": "Got home to Kothrud by 9:50.",
-     "entities": {"location": "Kothrud", "time": "9:50"}},
+     "entities": {"location": "Kothrud", "time": "9:50", "time_start": "21:50"}},
+]
+# The demo's second turn: the subject moves their own arrival time.
+SHIFT_CLAIMS = [
+    {"claim_type": "TIMELINE", "text": "Got home to Kothrud around 10:30.",
+     "entities": {"location": "Kothrud", "time": "10:30", "time_start": "22:30", "time_approx": True}},
 ]
 UNRELATED_CLAIMS = [
     {"claim_type": "ROUTE", "text": "Took a train from Mysuru to Bengaluru between 7:15 and 9:45.",
@@ -37,7 +44,13 @@ UNRELATED_CLAIMS = [
     {"claim_type": "VEHICLE", "text": "Saw a red Maruti van outside.",
      "entities": {"vehicle": "red Maruti van"}},
 ]
-PLACE_ALIASES = {"Hadapsar": "Hadapsar, Pune", "Kothrud": "Kothrud, Pune"}
+# The demo's optional third turn: the subject says the scooter never left home.
+PARKED_CLAIMS = [
+    {"claim_type": "VEHICLE", "text": "The white Activa was parked at home in Kothrud all night.",
+     "entities": {"vehicle": "white Activa", "location": "home, Kothrud", "time": "all night",
+                  "time_start": "21:00", "time_end": "23:59", "time_approx": True}},
+]
+PLACE_ALIASES ={"Hadapsar": "Hadapsar, Pune", "Kothrud": "Kothrud, Pune"}
 
 
 def _ok(parts: list[dict], **extra) -> JSONResponse:
@@ -81,6 +94,10 @@ def _extraction(body: dict) -> JSONResponse:
         claims = []
     elif "housewarming" in lowered:
         claims = ALIBI_CLAIMS
+    elif "10:30" in lowered:
+        claims = SHIFT_CLAIMS
+    elif "parked" in lowered:
+        claims = PARKED_CLAIMS
     elif "mysuru" in lowered:
         claims = UNRELATED_CLAIMS
     else:
@@ -148,6 +165,13 @@ def _plan(claim_type: str, claim_text: str, entities: dict, case_id: str, speake
             return {"call": search(entities.get("vehicle", ""))}
         if len(results) == 1:
             return {"call": ("generate_image", {"description": entities.get("vehicle", claim_text)})}
+        where = (entities.get("location") or "").lower()
+        for item in results[0].get("evidence", []):
+            seen_at = (item["metadata"].get("location") or "").lower()
+            if where and seen_at and "kothrud" not in seen_at and item["metadata"].get("vehicle_descriptor"):
+                return {"verdict": ("CONFLICT", (
+                    f"{item['evidence_type']} places a matching {item['metadata']['vehicle_descriptor']} "
+                    f"at {item['metadata']['location']} at {item['metadata'].get('time')}."))}
         return {"verdict": ("PENDING", "No case record mentions this vehicle.")}
 
     if not results:
@@ -234,6 +258,88 @@ def _verification(body: dict) -> JSONResponse:
     return _ok([{"text": json.dumps({"verdicts": verdicts})}])
 
 
+def _json_request(body: dict) -> bool:
+    config = body.get("generationConfig", {})
+    return config.get("responseMimeType") == "application/json" and bool(
+        config.get("responseSchema") or config.get("responseJsonSchema"))
+
+
+def _clock(entities: dict) -> int | None:
+    value = entities.get("time_start") or entities.get("time")
+    return _minutes_pm(value) if value and ":" in value else None
+
+
+def _alibi(prompt: str) -> JSONResponse:
+    """Scripted alibi check. A new claim with a place and a time clashes with: the same
+    speaker's earlier claim about the same place at another time (SELF); another person's
+    claim placing a vehicle somewhere else within the hour after it; or a record doing so."""
+    if "TRIGGER_ALIBI_400" in prompt:
+        return _error(400, "INVALID_ARGUMENT", "scripted alibi-check failure")
+    speaker = re.search(r"^Speaker: (.*?) \(", prompt, re.MULTILINE).group(1)
+    new = re.findall(r"^\[(\d+)\] \((\w+)\) (.*?) \| entities: (\{.*\})$", prompt, re.MULTILINE)
+    earlier = re.findall(r"^(C\d+) \| (.*?) \((\w+)\), turn \d+ \| \((\w+)\) (.*?) \| entities: (\{.*\})$",
+                         prompt, re.MULTILINE)
+    records = re.findall(r"^(E\d+) \| (\w+) \| (.*?) \| metadata: (\{.*\})$", prompt, re.MULTILINE)
+    findings = []
+    for number, _, text, raw in new:
+        entities = json.loads(raw)
+        when, where = _clock(entities), (entities.get("location") or "").lower()
+        if when is None or not where:
+            continue
+        for ref, who, _, _, other_text, other_raw in earlier:
+            other = json.loads(other_raw)
+            other_when, other_where = _clock(other), (other.get("location") or "").lower()
+            if other_when is None or not other_where:
+                continue
+            if who == speaker and other_where == where and abs(other_when - when) > 10:
+                findings.append({"claim": int(number), "source": ref, "severity": "HIGH",
+                                 "explanation": f"Earlier the speaker put this at {other['time_start']}, now at {entities['time_start']}.",
+                                 "new_quote": entities.get("time"), "prior_quote": other.get("time")})
+            elif who != speaker and other.get("vehicle") and other_where != where and 0 < other_when - when <= 60:
+                findings.append({"claim": int(number), "source": ref, "severity": "HIGH",
+                                 "explanation": f"{who} saw a {other['vehicle']} at {other['location']} at {other['time_start']}, after the claimed time.",
+                                 "new_quote": entities.get("time"), "prior_quote": other.get("time")})
+        for ref, kind, _, meta_raw in records:
+            meta = json.loads(meta_raw)
+            if entities.get("vehicle") and meta.get("vehicle_descriptor") and meta.get("location"):
+                # The speaker's vehicle placed elsewhere during the span they claim for it.
+                end = _minutes_pm(entities["time_end"]) if entities.get("time_end") else when
+                if meta.get("time") and when <= _minutes_pm(meta["time"]) <= end:
+                    findings.append({"claim": int(number), "source": ref, "severity": "HIGH",
+                                     "explanation": f"{kind} places a matching {meta['vehicle_descriptor']} at {meta['location']} at {meta['time']}.",
+                                     "new_quote": "parked at home", "prior_quote": meta["time"]})
+                continue
+            if meta.get("time") and meta.get("location") and 0 < _minutes_pm(meta["time"]) - when <= 60:
+                findings.append({"claim": int(number), "source": ref, "severity": "HIGH",
+                                 "explanation": f"{kind} places a matching person and vehicle at {meta['location']} at {meta['time']}.",
+                                 "new_quote": entities.get("time"), "prior_quote": meta["time"]})
+    return _ok([{"text": json.dumps({"findings": findings})}])
+
+
+def _followups(prompt: str) -> JSONResponse:
+    claims = dict(re.findall(r"^\[(\d+)\] \w+ \(\w+\) (.*?) \| reason:", prompt, re.MULTILINE))
+    doubtful = re.findall(r"^\[(\d+)\] (?:FLAGGED|CONFLICT) ", prompt, re.MULTILINE)
+    from_findings = list(dict.fromkeys(re.findall(r"^- claim \[(\d+)\]", prompt, re.MULTILINE)))
+    questions = [{"question": f"Who can confirm this: \"{claims[n]}\"?", "claims": [int(n)],
+                  "rationale": "It clashes with another account.", "from_finding": True} for n in from_findings]
+    questions += [{"question": f"Can you go over this again: \"{claims[n]}\"?", "claims": [int(n)],
+                   "rationale": "The check left it doubtful.", "from_finding": False}
+                  for n in doubtful if n not in from_findings]
+    return _ok([{"text": json.dumps({"questions": questions})}])
+
+
+def _report(prompt: str) -> JSONResponse:
+    if "TRIGGER_REPORT_400" in prompt:
+        return _error(400, "INVALID_ARGUMENT", "scripted report failure")
+    findings = len(re.findall(r"^- (SELF|WITNESS|EVIDENCE) ", prompt, re.MULTILINE))
+    turns = len(re.findall(r"^T\d+: ", prompt, re.MULTILINE))
+    return _ok([{"text": json.dumps({
+        "overview": f"Scripted summary of {turns} turns with {findings} alibi-check findings.",
+        "key_findings": [f"{findings} alibi-check findings"], "unresolved": ["Scripted item"],
+        "next_steps": ["Scripted next step"],
+    })}])
+
+
 @app.post("/{version}/models/{model}:generateContent")
 async def generate(version: str, model: str, request: Request):
     body = await request.json()
@@ -252,6 +358,12 @@ async def generate(version: str, model: str, request: Request):
         )
     if any("functionDeclarations" in t for t in tools):
         return _verification(body)
+    prompt = body["contents"][0]["parts"][0]["text"]
+    for marker, handler in (("ALIBI CHECK", _alibi), ("FOLLOW-UP QUESTIONS", _followups), ("INTERVIEW REPORT", _report)):
+        if prompt.startswith(marker):
+            if not _json_request(body):
+                return _error(400, "INVALID_ARGUMENT", f"{marker} must request a JSON schema")
+            return handler(prompt)
     return _extraction(body)
 
 
