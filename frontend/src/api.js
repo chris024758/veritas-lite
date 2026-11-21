@@ -24,6 +24,8 @@ function sendJson(method, path, data) {
 }
 const postJson = (path, data) => sendJson("POST", path, data);
 
+export const generateImage = (description) => postJson("/tools/generate-image", { description });
+
 export const listCases = () => request("/cases");
 
 export const getCase = (caseId) => request(`/cases/${caseId}`);

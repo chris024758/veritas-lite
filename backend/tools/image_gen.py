@@ -1,7 +1,6 @@
 """HuggingFace Inference API image-generation tool.
 
-Primary model : black-forest-labs/FLUX.1-schnell  (fast, public, free tier)
-Fallback model: stabilityai/stable-diffusion-xl-base-1.0
+Model: black-forest-labs/FLUX.1-dev via Hugging Face Inference Providers.
 
 Design goals (per PRD §7 generate_image contract):
   - Non-blocking: any error is caught and returned as a plain dict so a failed
@@ -23,12 +22,13 @@ Compatibility note:
 from __future__ import annotations
 
 import os
+import io
 import uuid
 from html import escape
 from pathlib import Path
 
-import requests
 from dotenv import load_dotenv
+from huggingface_hub import InferenceClient
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
@@ -37,31 +37,20 @@ OUTPUT_DIR = Path(__file__).parent.parent / "generated"
 # ---------------------------------------------------------------------------
 # HuggingFace Inference API config
 # ---------------------------------------------------------------------------
-_HF_API_BASE = "https://api-inference.huggingface.co/models"
-_PRIMARY_MODEL = "black-forest-labs/FLUX.1-schnell"
-_FALLBACK_MODEL = "stabilityai/stable-diffusion-xl-base-1.0"
-_TIMEOUT = 60  # seconds; first cold-start of FLUX.1 can be slow
+_PRIMARY_MODEL = "black-forest-labs/FLUX.1-dev"
+_TIMEOUT = 120
 
 
 # ---------------------------------------------------------------------------
 # Internal: separated so tests can patch it cleanly
 # ---------------------------------------------------------------------------
 def _hf_generate(description: str, token: str) -> bytes:
-    """POST to HF Inference API; return raw image bytes.  Raises on failure."""
-    headers = {"Authorization": f"Bearer {token}"}
-    payload = {"inputs": description}
-
-    for model in (_PRIMARY_MODEL, _FALLBACK_MODEL):
-        url = f"{_HF_API_BASE}/{model}"
-        resp = requests.post(url, headers=headers, json=payload, timeout=_TIMEOUT)
-        if resp.status_code == 200:
-            return resp.content
-        if resp.status_code == 503:
-            # Model still loading — try fallback before giving up
-            continue
-        raise RuntimeError(f"HF API {resp.status_code}: {resp.text[:200]}")
-
-    raise RuntimeError("Both HF models unavailable (503).")
+    """Generate an image through Hugging Face's provider-aware client."""
+    client = InferenceClient(api_key=token, timeout=_TIMEOUT)
+    image = client.text_to_image(prompt=description, model=_PRIMARY_MODEL)
+    output = io.BytesIO()
+    image.save(output, format="PNG")
+    return output.getvalue()
 
 
 # ---------------------------------------------------------------------------

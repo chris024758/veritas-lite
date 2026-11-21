@@ -39,6 +39,18 @@ _TINY_PNG = (
 # Slice 1 — happy path: token + successful HF call
 # ---------------------------------------------------------------------------
 class TestSlice1HappyPath(unittest.TestCase):
+    def test_provider_client_receives_prompt_and_returns_png(self):
+        import tools.image_gen as img
+
+        with patch("tools.image_gen.InferenceClient") as client_class:
+            generated = client_class.return_value.text_to_image.return_value
+            generated.save.side_effect = lambda output, format: output.write(_TINY_PNG)
+            self.assertEqual(img._hf_generate("a scooter", "fake-token"), _TINY_PNG)
+            client_class.assert_called_once_with(api_key="fake-token", timeout=120)
+            client_class.return_value.text_to_image.assert_called_once_with(
+                prompt="a scooter", model=img._PRIMARY_MODEL
+            )
+
     def test_returns_image_url_and_not_placeholder(self):
         """With HF_TOKEN set and HF returning bytes, result has image_url."""
         import tools.image_gen as img
