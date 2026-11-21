@@ -138,6 +138,7 @@ function Workspace() {
       setFreshFindingIds((result.alibi_findings ?? []).map((f) => f.id));
       setAsking(null);
       refreshTimeline(caseId);
+      if (result.new_records?.length) refreshCase(caseId);
       return true;
     } catch (e) {
       setError(e.message);
@@ -187,6 +188,25 @@ function Workspace() {
     }
     setTimelineFocus(source.type === "claim" ? `c${source.id}` : `e${source.id}`);
     navigate(casePath(caseId, "timeline"));
+  }
+
+  // An upload is read, filed as a record, and may clash with other people's claims. Its clashes
+  // belong to the latest turn, as on the server.
+  function attached(upload) {
+    const raised = upload.alibi_findings ?? [];
+    setInterview((iv) => {
+      const statements = [...iv.statements];
+      if (raised.length && statements.length) {
+        const last = statements[statements.length - 1];
+        statements[statements.length - 1] = { ...last, alibi_findings: [...(last.alibi_findings ?? []), ...raised] };
+      }
+      return { ...iv, statements, attachments: [...iv.attachments, upload] };
+    });
+    if (raised.length) setFreshFindingIds(raised.map((f) => f.id));
+    if (upload.evidence) {
+      refreshCase(caseId);
+      refreshTimeline(caseId);
+    }
   }
 
   const onSnapshot = useCallback((shot) => setSnapshot(shot), []);
@@ -273,7 +293,7 @@ function Workspace() {
                   sessionId={active.sessionId}
                   statements={active.statements}
                   attachments={active.attachments}
-                  onAttached={(a) => setInterview((iv) => ({ ...iv, attachments: [...iv.attachments, a] }))}
+                  onAttached={attached}
                   asking={asking}
                   onClearAsking={() => setAsking(null)}
                   onSend={send}
@@ -287,7 +307,7 @@ function Workspace() {
             </main>
 
             {active ? (
-              <SidePanel statements={active.statements} sessionId={active.sessionId} freshFindingIds={freshFindingIds}
+              <SidePanel statements={active.statements} attachments={active.attachments} sessionId={active.sessionId} freshFindingIds={freshFindingIds}
                 onPickQuestion={setAsking} onJump={jumpTo} />
             ) : (
               <aside className="side glass" aria-label="Findings">

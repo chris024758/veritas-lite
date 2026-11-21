@@ -93,14 +93,17 @@ Verdicts:
 
 For a claim that describes a vehicle, call generate_image once with that vehicle as described, so the investigator can picture it; it never affects the verdict.
 
+Case records: if the speaker is a witness and describes something physical they saw at a relevant time and place (a vehicle, a person, an object) that the case records do not already hold, propose it as a new case record. For a vehicle or a person, cite the generate_image call that pictures it. Never propose records from a suspect's account of their own movements, and never propose a record that only restates something already on file.
+
 When a route check informed a verdict, the reason must state actual_minutes and claimed_minutes, and mention the assumed speed if the result used one. When a record informed it, name that record and what it says. Do not treat a failed tool as evidence.
 
-Every tool result carries a call_id. When you are finished, reply with only a JSON object holding one verdict per claim, listing the call_ids of the results that verdict relied on:
-{"verdicts": [{"claim": <claim number>, "status": "<verdict>", "reason": "<one or two sentences>", "evidence_calls": [<call_id>, ...]}]}"""
+Every tool result carries a call_id. When you are finished, reply with only a JSON object holding one verdict per claim, listing the call_ids of the results that verdict relied on, plus any proposed case records (usually none):
+{"verdicts": [{"claim": <claim number>, "status": "<verdict>", "reason": "<one or two sentences>", "evidence_calls": [<call_id>, ...]}],
+ "records": [{"claim": <claim number>, "record_type": "<snake_case, e.g. vehicle_sighting>", "description": "<one or two sentences>", "metadata": {"time": "<HH:MM if known>", "location": "<place>", ...}, "image_call": <call_id of generate_image or null>}]}"""
 
 VERDICT_REMINDER = (
     'Give your verdicts now as JSON only: {"verdicts": [{"claim": <claim number>, '
-    '"status": "...", "reason": "...", "evidence_calls": [<call_id>, ...]}]}'
+    '"status": "...", "reason": "...", "evidence_calls": [<call_id>, ...]}], "records": [...]}'
 )
 
 
@@ -111,8 +114,17 @@ class Verdict(BaseModel):
     evidence_calls: list[int] = []
 
 
+class Record(BaseModel):
+    claim: int
+    record_type: str
+    description: str
+    metadata: dict = {}
+    image_call: int | None = None
+
+
 class Verdicts(BaseModel):
     verdicts: list[Verdict]
+    records: list[Record] = []
 
 
 def _dispatch(name: str, args: dict, case_id: str, statement_id: int) -> dict:
@@ -133,12 +145,8 @@ def _dispatch(name: str, args: dict, case_id: str, statement_id: int) -> dict:
 
 def _parse_verdicts(text: str | None) -> dict[int, Verdict] | None:
     """Verdicts keyed by claim number, or None if the reply is not usable at all."""
-    match = re.search(r"\{.*\}", text or "", re.DOTALL)
-    if not match:
-        return None
-    try:
-        parsed = Verdicts.model_validate_json(match.group(0))
-    except ValueError:
+    parsed = _parse(text)
+    if parsed is None:
         return None
     verdicts = {}
     for verdict in parsed.verdicts:
@@ -146,6 +154,16 @@ def _parse_verdicts(text: str | None) -> dict[int, Verdict] | None:
         if verdict.status in db.VALID_STATUSES:
             verdicts[verdict.claim] = verdict
     return verdicts
+
+
+def _parse(text: str | None) -> Verdicts | None:
+    match = re.search(r"\{.*\}", text or "", re.DOTALL)
+    if not match:
+        return None
+    try:
+        return Verdicts.model_validate_json(match.group(0))
+    except ValueError:
+        return None
 
 
 def _user_prompt(claims: list[dict], statement: str, case_id: str, speaker: str) -> str:
@@ -165,8 +183,14 @@ def _user_prompt(claims: list[dict], statement: str, case_id: str, speaker: str)
 def verify_statement(claims: list[dict], statement: str, statement_id: int, case_id: str, speaker: str) -> list[dict]:
     """One {status, reason, details} per claim, in order. A Gemini failure leaves every claim
     PENDING; a claim the model gives no verdict for is PENDING on its own."""
+    return verify_statement_full(claims, statement, statement_id, case_id, speaker)["results"]
+
+
+def verify_statement_full(claims: list[dict], statement: str, statement_id: int, case_id: str, speaker: str) -> dict:
+    """{results, records, tool_calls}. records are the model's PROPOSALS for new case records;
+    the caller decides which to keep (see main.run_pipeline)."""
     if not claims:
-        return []
+        return {"results": [], "records": [], "tool_calls": []}
     tool_calls = []
     contents = [types.Content(role="user", parts=[types.Part(text=_user_prompt(claims, statement, case_id, speaker))])]
     model_calls = 0
@@ -208,18 +232,22 @@ def verify_statement(claims: list[dict], statement: str, statement_id: int, case
         else:
             response = None  # ran out of rounds on a tool call: ask for the verdicts below
 
-        verdicts = _parse_verdicts(response.text) if response is not None else None
+        final_text = response.text if response is not None else None
+        verdicts = _parse_verdicts(final_text)
         if verdicts is None:
             if response is not None and response.candidates and response.candidates[0].content:
                 contents.append(response.candidates[0].content)
             contents.append(types.Content(role="user", parts=[types.Part(text=VERDICT_REMINDER)]))
-            verdicts = _parse_verdicts(gemini_client.generate(gemini_client.MODEL, contents, config(False)).text)
+            final_text = gemini_client.generate(gemini_client.MODEL, contents, config(False)).text
+            verdicts = _parse_verdicts(final_text)
             model_calls += 1
     except (errors.APIError, gemini_client.GeminiNotConfigured, ValueError) as exc:
-        return [outcome("PENDING", f"Verification did not complete: {exc}", []) for _ in claims]
+        return {"results": [outcome("PENDING", f"Verification did not complete: {exc}", []) for _ in claims],
+                "records": [], "tool_calls": tool_calls}
 
     if verdicts is None:
-        return [outcome("PENDING", "The model did not return usable verdicts.", []) for _ in claims]
+        return {"results": [outcome("PENDING", "The model did not return usable verdicts.", []) for _ in claims],
+                "records": [], "tool_calls": tool_calls}
     results = []
     for number in range(1, len(claims) + 1):
         verdict = verdicts.get(number)
@@ -227,4 +255,6 @@ def verify_statement(claims: list[dict], statement: str, statement_id: int, case
             results.append(outcome("PENDING", "The model gave no verdict for this claim.", []))
         else:
             results.append(outcome(verdict.status, verdict.reason, verdict.evidence_calls))
-    return results
+    parsed = _parse(final_text)
+    records = [r.model_dump() for r in parsed.records] if parsed else []
+    return {"results": results, "records": records, "tool_calls": tool_calls}

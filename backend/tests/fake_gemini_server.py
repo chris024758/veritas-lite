@@ -50,7 +50,33 @@ PARKED_CLAIMS = [
      "entities": {"vehicle": "white Activa", "location": "home, Kothrud", "time": "all night",
                   "time_start": "21:00", "time_end": "23:59", "time_approx": True}},
 ]
-PLACE_ALIASES ={"Hadapsar": "Hadapsar, Pune", "Kothrud": "Kothrud, Pune"}
+# The final demo: three people, one statement each.
+CLEANER_CLAIMS = [
+    {"claim_type": "VEHICLE",
+     "text": "A black SUV with a round red trident sticker on the rear glass stood in the shop's back lane around 10:15.",
+     "entities": {"vehicle": "black SUV with a round red trident sticker on the rear glass",
+                  "location": "back lane, Shree Lakshmi Jewellers, FC Road, Pune",
+                  "time": "10:15", "time_start": "22:15", "time_approx": True}},
+    {"claim_type": "EVENT", "text": "Two men got into the SUV and it drove off towards Shivajinagar.",
+     "entities": {"location": "towards Shivajinagar", "time_start": "22:16", "time_approx": True}},
+]
+SURESH_CLAIMS = [
+    {"claim_type": "TIMELINE", "text": "Was at friend Ramesh's place in Hadapsar until about 9.",
+     "entities": {"location": "Ramesh's place, Hadapsar", "person": "Ramesh", "time": "9:00",
+                  "time_end": "21:00", "time_approx": True}},
+    {"claim_type": "ROUTE", "text": "Rode from the shop to home in Kothrud, leaving at 9:40 and arriving by 9:50.",
+     "entities": {"origin": "the shop", "destination": "Kothrud", "claimed_minutes": 10,
+                  "time_start": "21:40", "time_end": "21:50"}},
+    {"claim_type": "TIMELINE", "text": "Got home to Kothrud by 9:50.",
+     "entities": {"location": "Kothrud", "time": "9:50", "time_start": "21:50"}},
+]
+RAMESH_CLAIMS = [
+    {"claim_type": "PERSON", "text": "Suresh did not come to Ramesh's place that evening.",
+     "entities": {"person": "Suresh Deshmukh", "location": "Ramesh's place, Hadapsar"}},
+    {"claim_type": "EVENT", "text": "Ramesh was at the Indian Ocean concert in Pune on 21 November.",
+     "entities": {"location": "Indian Ocean concert, Pune", "time_start": "19:30", "time_approx": True}},
+]
+PLACE_ALIASES = {"Hadapsar": "Hadapsar, Pune", "Kothrud": "Kothrud, Pune"}
 
 
 def _ok(parts: list[dict], **extra) -> JSONResponse:
@@ -92,6 +118,12 @@ def _extraction(body: dict) -> JSONResponse:
     lowered = statement.lower()
     if "don't remember" in lowered or "do not remember" in lowered:
         claims = []
+    elif "black suv" in lowered:
+        claims = CLEANER_CLAIMS
+    elif "ramesh's place" in lowered:
+        claims = SURESH_CLAIMS
+    elif "didn't come over" in lowered or "did not come over" in lowered:
+        claims = RAMESH_CLAIMS
     elif "housewarming" in lowered:
         claims = ALIBI_CLAIMS
     elif "10:30" in lowered:
@@ -174,6 +206,11 @@ def _plan(claim_type: str, claim_text: str, entities: dict, case_id: str, speake
                     f"at {item['metadata']['location']} at {item['metadata'].get('time')}."))}
         return {"verdict": ("PENDING", "No case record mentions this vehicle.")}
 
+    if claim_type in ("PERSON", "EVENT"):
+        if not results:
+            return {"call": search(claim_text)}
+        return {"verdict": ("PENDING", "No case record establishes this either way.")}
+
     if not results:
         return {"call": search(claim_text)}
     found = results[0].get("evidence") or results[0].get("subjects")
@@ -248,6 +285,14 @@ def _verification(body: dict) -> JSONResponse:
         if calls:
             return _ok(calls)
 
+    records = []
+    if "(Witness)" in speaker:
+        for number, (claim_type, text, entities) in claims.items():
+            if claim_type == "VEHICLE" and len(cited[number]) >= 2:
+                records.append({"claim": number, "record_type": "vehicle_sighting", "description": text,
+                                "metadata": {"time": entities.get("time_start"), "location": entities.get("location"),
+                                             "vehicle_descriptor": entities.get("vehicle")},
+                                "image_call": cited[number][1]})
     verdicts = []
     for number, s in steps.items():
         if number in prose:
@@ -255,7 +300,7 @@ def _verification(body: dict) -> JSONResponse:
         else:
             status, reason = s.get("verdict", ("PENDING", "Ran out of tool rounds."))
         verdicts.append({"claim": number, "status": status, "reason": reason, "evidence_calls": cited[number]})
-    return _ok([{"text": json.dumps({"verdicts": verdicts})}])
+    return _ok([{"text": json.dumps({"verdicts": verdicts, "records": records})}])
 
 
 def _json_request(body: dict) -> bool:
@@ -270,9 +315,9 @@ def _clock(entities: dict) -> int | None:
 
 
 def _alibi(prompt: str) -> JSONResponse:
-    """Scripted alibi check. A new claim with a place and a time clashes with: the same
-    speaker's earlier claim about the same place at another time (SELF); another person's
-    claim placing a vehicle somewhere else within the hour after it; or a record doing so."""
+    """Scripted alibi check. Clashes: "<person> did not come to my place" against that person
+    saying they were at the speaker's place; and the same speaker putting the same place at two
+    different times (SELF)."""
     if "TRIGGER_ALIBI_400" in prompt:
         return _error(400, "INVALID_ARGUMENT", "scripted alibi-check failure")
     speaker = re.search(r"^Speaker: (.*?) \(", prompt, re.MULTILINE).group(1)
@@ -281,8 +326,18 @@ def _alibi(prompt: str) -> JSONResponse:
                          prompt, re.MULTILINE)
     records = re.findall(r"^(E\d+) \| (\w+) \| (.*?) \| metadata: (\{.*\})$", prompt, re.MULTILINE)
     findings = []
-    for number, _, text, raw in new:
+    host = speaker.split()[0].lower()
+    for number, claim_type, text, raw in new:
         entities = json.loads(raw)
+        # "<person> did not come to my place" against that person saying they were at the speaker's.
+        if claim_type == "PERSON" and " not " in f" {text.lower()} " and entities.get("person"):
+            for ref, who, _, _, other_text, other_raw in earlier:
+                other = json.loads(other_raw)
+                if who == entities["person"] and host in (other.get("location") or "").lower():
+                    findings.append({"claim": int(number), "source": ref, "severity": "HIGH",
+                                     "explanation": f"{speaker} says {who} did not come over; {who} said he was at {other['location']}.",
+                                     "new_quote": "did not come", "prior_quote": f"{speaker.split()[0]}'s place"})
+            continue
         when, where = _clock(entities), (entities.get("location") or "").lower()
         if when is None or not where:
             continue
@@ -295,25 +350,28 @@ def _alibi(prompt: str) -> JSONResponse:
                 findings.append({"claim": int(number), "source": ref, "severity": "HIGH",
                                  "explanation": f"Earlier the speaker put this at {other['time_start']}, now at {entities['time_start']}.",
                                  "new_quote": entities.get("time"), "prior_quote": other.get("time")})
-            elif who != speaker and other.get("vehicle") and other_where != where and 0 < other_when - when <= 60:
-                findings.append({"claim": int(number), "source": ref, "severity": "HIGH",
-                                 "explanation": f"{who} saw a {other['vehicle']} at {other['location']} at {other['time_start']}, after the claimed time.",
-                                 "new_quote": entities.get("time"), "prior_quote": other.get("time")})
-        for ref, kind, _, meta_raw in records:
-            meta = json.loads(meta_raw)
-            if entities.get("vehicle") and meta.get("vehicle_descriptor") and meta.get("location"):
-                # The speaker's vehicle placed elsewhere during the span they claim for it.
-                end = _minutes_pm(entities["time_end"]) if entities.get("time_end") else when
-                if meta.get("time") and when <= _minutes_pm(meta["time"]) <= end:
-                    findings.append({"claim": int(number), "source": ref, "severity": "HIGH",
-                                     "explanation": f"{kind} places a matching {meta['vehicle_descriptor']} at {meta['location']} at {meta['time']}.",
-                                     "new_quote": "parked at home", "prior_quote": meta["time"]})
-                continue
-            if meta.get("time") and meta.get("location") and 0 < _minutes_pm(meta["time"]) - when <= 60:
-                findings.append({"claim": int(number), "source": ref, "severity": "HIGH",
-                                 "explanation": f"{kind} places a matching person and vehicle at {meta['location']} at {meta['time']}.",
-                                 "new_quote": entities.get("time"), "prior_quote": meta["time"]})
     return _ok([{"text": json.dumps({"findings": findings})}])
+
+
+def _document(prompt: str, image: bytes) -> JSONResponse:
+    """Scripted reading of an uploaded image: always a concert ticket. Bytes containing
+    WRONGDATE make it dated a week earlier, to exercise the date guard."""
+    speaker = re.search(r"^Shown by: (.*?) \(", prompt, re.MULTILINE).group(1)
+    host = speaker.split()[0]
+    date = "2026-11-14" if b"WRONGDATE" in image else "2026-11-21"
+    contradicts = [
+        {"source": ref, "severity": "HIGH", "prior_quote": f"{host}'s place",
+         "explanation": f"{speaker} was at a concert that evening, so nobody was at {host}'s place with him."}
+        for ref, text in re.findall(r"^(C\d+) \| .*? \| \(\w+\) (.*)$", prompt, re.MULTILINE)
+        if f"{host.lower()}'s place" in text.lower()
+    ]
+    return _ok([{"text": json.dumps({
+        "document_type": "concert ticket",
+        "fields": {"event": "Indian Ocean live", "venue": "Phoenix Marketcity amphitheatre, Pune",
+                   "date": date, "time": "19:30", "holder": speaker},
+        "summary": f"Ticket for Indian Ocean live in Pune on {date} at 7:30 PM, in {speaker}'s name.",
+        "supports": [2], "contradicts": contradicts,
+    })}])
 
 
 def _followups(prompt: str) -> JSONResponse:
@@ -358,7 +416,13 @@ async def generate(version: str, model: str, request: Request):
         )
     if any("functionDeclarations" in t for t in tools):
         return _verification(body)
-    prompt = body["contents"][0]["parts"][0]["text"]
+    parts = body["contents"][0]["parts"]
+    prompt = next((p["text"] for p in parts if "text" in p), "")
+    image = next((base64.b64decode(p["inlineData"]["data"]) for p in parts if "inlineData" in p), None)
+    if prompt.startswith("DOCUMENT CHECK"):
+        if image is None or not _json_request(body):
+            return _error(400, "INVALID_ARGUMENT", "document check needs an image and a JSON schema")
+        return _document(prompt, image)
     for marker, handler in (("ALIBI CHECK", _alibi), ("FOLLOW-UP QUESTIONS", _followups), ("INTERVIEW REPORT", _report)):
         if prompt.startswith(marker):
             if not _json_request(body):

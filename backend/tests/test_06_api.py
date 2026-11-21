@@ -42,7 +42,7 @@ def tools_used(claim):
 r = requests.get(f"{API}/cases/{CASE}")
 body = r.json()
 check("GET case 200", r.status_code == 200)
-check("case has 2 subjects, 5 evidence", len(body["subjects"]) == 2 and len(body["evidence"]) == 5)
+check("case has 2 subjects, 4 evidence", len(body["subjects"]) == 2 and len(body["evidence"]) == 4)
 check("GET unknown case 404", requests.get(f"{API}/cases/NOPE").status_code == 404)
 
 # POST /sessions/start
@@ -71,7 +71,7 @@ check("vague 'the shop' resolved through the case file", result["origin_matched"
 leg = next(c for c in body["claims"] if c["entities"].get("claimed_minutes") == 40)
 check("Hadapsar leg is not flagged", leg["status"] == "CONSISTENT", leg["reason"])
 home = next(c for c in body["claims"] if c["entities"].get("time") == "9:50")
-check("home-by-9:50 cross-ref CONFLICT from witness record", home["status"] == "CONFLICT" and "witness_statement" in home["reason"], home["reason"])
+check("home-by-9:50 is checked against the case file (nothing on file settles it)", home["status"] == "PENDING", home["reason"])
 check("every alibi claim has a reason", all(c["reason"] for c in body["claims"]))
 # 1 extraction + at most 4 verification + 1 alibi check + 1 follow-ups.
 check("alibi costs at most 7 Gemini calls in total", alibi_calls <= 7, f"{alibi_calls} calls for 4 claims")

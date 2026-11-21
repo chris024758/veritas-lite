@@ -7,9 +7,9 @@ const Recognition = typeof window !== "undefined" && (window.SpeechRecognition |
 
 // Prepared answers for rehearsal; picking one fills the draft, which still needs Send.
 export const DEMO_SCRIPT = [
-  { label: "Turn 1 · Alibi", text: "I was at my cousin's housewarming in Hadapsar. Left around 9, rode to the shop to check the locks, reached around 9:40, then went straight home to Kothrud, got in by 9:50." },
-  { label: "Turn 2 · Changed time", text: "Actually, now I think about it, I only got home to Kothrud around 10:30." },
-  { label: "Turn 3 · Scooter", text: "My white Activa was parked at home the whole night." },
+  { label: "Street cleaner · the SUV", text: "Around quarter past ten I was sweeping near the jewellers on FC Road. A black SUV was standing in the back lane with its engine running. It had a big round sticker on the rear glass, a red trident I think. Two men got in and it drove off towards Shivajinagar." },
+  { label: "Suresh · his evening", text: "I was at my friend Ramesh's place in Hadapsar till about nine. Then I rode to the shop to check on things, left at 9:40, and was home in Kothrud by 9:50." },
+  { label: "Ramesh · the concert", text: "No, Suresh didn't come over that evening. I wasn't even home. I was at the Indian Ocean concert in Pune on 21 November. Here's my ticket." },
 ];
 
 // The statement with the words an alibi check clashed on underlined.
@@ -62,7 +62,11 @@ function Attachment({ a }) {
     <li className="talk-attachment">
       <figure>
         <img src={assetUrl(a.url ?? `/uploads/${a.filename}`)} alt={a.caption || a.original_name || "Added image"} />
-        <figcaption><span className="tag">Image added</span> {a.caption || a.original_name}</figcaption>
+        <figcaption>
+          <span className="tag">{a.evidence || a.evidence_id ? "Filed as evidence" : "Image added"}</span> {a.caption || a.original_name}
+          {a.reading && <span className="read-as">Read as: {a.reading.summary}</span>}
+          {a.reading_error && <span className="read-as muted">{a.reading_error}</span>}
+        </figcaption>
       </figure>
     </li>
   );
@@ -271,9 +275,9 @@ export default function VoiceStage({ subject, sessionId, statements, attachments
               <div>
                 <input value={pendingImage.caption} placeholder="Caption, e.g. photo shown by the subject"
                   onChange={(e) => setPendingImage((p) => ({ ...p, caption: e.target.value }))} autoFocus />
-                <p className="muted small">Added to the interview record. It is not checked by the AI.</p>
+                <p className="muted small">The image is read by the AI, filed in the case file and checked against other people's statements.</p>
                 <div className="actions">
-                  <button type="button" className="primary" onClick={uploadImage} disabled={pendingImage.busy}>Add image</button>
+                  <button type="button" className="primary" onClick={uploadImage} disabled={pendingImage.busy}>{pendingImage.busy ? "Reading…" : "Add and read"}</button>
                   <button type="button" className="secondary" onClick={() => { URL.revokeObjectURL(pendingImage.preview); setPendingImage(null); }}>Cancel</button>
                 </div>
               </div>

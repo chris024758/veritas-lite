@@ -1,5 +1,6 @@
 """FastAPI backend. Run seed.py once first, then: uvicorn main:app --port 8018"""
 import os
+import re
 import tempfile
 import uuid
 from pathlib import Path
@@ -14,6 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import alibi_check
 import db
+import documents
 import extraction
 import followups
 import gemini_client
@@ -103,6 +105,32 @@ def _alibi_check(claims: list[dict], text: str, statement_id: int, session: dict
         return [], f"Alibi check did not complete: {exc}"
 
 
+def _keep_records(verified: dict, stored: list[dict], session: dict, statement_id: int) -> list[dict]:
+    """Turn the model's record PROPOSALS into case records, under the program's rules: a suspect
+    cannot add records, each must come from a real claim of this statement, and an image is
+    attached only from a real generate_image call, marked as generated so nothing treats it as
+    proof."""
+    subject = db.get_subject(session["subject_id"]) if session["subject_id"] is not None else None
+    if subject is None or subject["role"] == "Suspect":
+        return []
+    images = {c["id"]: c["result"].get("image_url") for c in verified["tool_calls"]
+              if c["name"] == "generate_image" and isinstance(c.get("result"), dict)}
+    kept = []
+    for proposal in verified["records"][:3]:
+        if not 1 <= proposal["claim"] <= len(stored) or not proposal["description"].strip():
+            continue
+        record_type = re.sub(r"[^a-z0-9_]+", "_", proposal["record_type"].strip().lower()).strip("_") or "observation"
+        image = images.get(proposal.get("image_call"))
+        metadata = {k: v for k, v in (proposal.get("metadata") or {}).items() if v not in (None, "", [])}
+        metadata.setdefault("reported_by", subject["full_name"])
+        kept.append(db.add_evidence(
+            session["case_id"], record_type, proposal["description"].strip(), metadata,
+            source="statement", image=image, image_kind="generated" if image else None,
+            session_id=session["id"], statement_id=statement_id, subject_id=subject["id"],
+        ))
+    return kept
+
+
 def run_pipeline(session: dict, text: str) -> dict:
     """Extract claims; then, in parallel, verify them with the tool-calling loop and run the
     alibi check against everything already on the case; then suggest follow-ups."""
@@ -122,16 +150,19 @@ def run_pipeline(session: dict, text: str) -> dict:
         for claim in claims
     ]
     with ThreadPoolExecutor(max_workers=2) as pool:
-        verifying = pool.submit(verification.verify_statement, claims, text, statement["id"], session["case_id"], speaker)
+        verifying = pool.submit(verification.verify_statement_full, claims, text, statement["id"], session["case_id"], speaker)
         checking = pool.submit(_alibi_check, stored, text, statement["id"], session, speaker)
-        outcomes = verifying.result()
+        verified = verifying.result()
         found, alibi_error = checking.result()
+    outcomes = verified["results"]
 
     for claim, outcome in zip(stored, outcomes):
         db.finish_claim(claim["id"], outcome["status"], outcome["reason"], outcome["details"])
     for finding in found:
         db.add_finding(session["case_id"], statement["id"], **finding)
         db.flag_for_finding(finding["claim_id"], f"Alibi check: {finding['explanation']}")
+
+    new_records = _keep_records(verified, stored, session, statement["id"])
 
     results = db.get_claims(statement["id"])
     findings = db.get_findings(statement_id=statement["id"])
@@ -142,7 +173,7 @@ def run_pipeline(session: dict, text: str) -> dict:
     except (errors.APIError, gemini_client.GeminiNotConfigured, ValueError) as exc:
         followup_error = f"Follow-up questions could not be generated: {exc}"
     return {**statement, "claims": results, "alibi_findings": findings, "followups": followup_list,
-            "alibi_error": alibi_error, "followup_error": followup_error}
+            "new_records": new_records, "alibi_error": alibi_error, "followup_error": followup_error}
 
 
 @app.post("/sessions/start")
@@ -161,8 +192,8 @@ def start_session(body: StartSession):
 
 @app.post("/sessions/{session_id}/attachments")
 def add_attachment(session_id: int, image: UploadFile, caption: str | None = Form(None)):
-    """An image the investigator adds to the interview, for example a photo the subject shows.
-    It is stored and shown in the conversation; it is not analysed or sent to Gemini."""
+    """An image the person shows during the interview, for example a ticket. It is stored, read
+    by Gemini, filed in the case file as a record, and checked against other people's claims."""
     session = _require_session(session_id)
     if session["ended_at"]:
         raise HTTPException(409, "this interview has ended")
@@ -174,9 +205,60 @@ def add_attachment(session_id: int, image: UploadFile, caption: str | None = For
         raise HTTPException(413, "images must be 10 MB or smaller")
     filename = f"{uuid.uuid4().hex}{suffix}"
     (UPLOAD_DIR / filename).write_bytes(data)
-    record = db.add_attachment(session_id, db.count_statements(session_id), filename,
-                               image.filename, (caption or "").strip() or None)
-    return {**record, "url": f"/uploads/{filename}"}
+    caption = (caption or "").strip() or None
+    record = db.add_attachment(session_id, db.count_statements(session_id), filename, image.filename, caption)
+    url = f"/uploads/{filename}"
+    result = {**record, "url": url, "evidence": None, "reading": None, "alibi_findings": [], "reading_error": None}
+    try:
+        result.update(_read_upload(session, record, data, image.content_type, url, caption))
+    except (errors.APIError, gemini_client.GeminiNotConfigured, ValueError) as exc:
+        result["reading_error"] = f"The image was saved but could not be read: {exc}"
+    return result
+
+
+def _read_upload(session: dict, attachment: dict, data: bytes, mime_type: str, url: str, caption: str | None) -> dict:
+    case = db.get_case(session["case_id"])
+    subject = db.get_subject(session["subject_id"]) if session["subject_id"] is not None else None
+    statement_id = db.latest_statement_id(session["id"])
+    everyone = db.get_case_claims(session["case_id"])
+    own = [c for c in everyone if c["session_id"] == session["id"]]
+    others = [c for c in everyone if c["session_id"] != session["id"]
+              and (subject is None or c["subject_id"] != subject["id"])]
+    reading = documents.read(data, mime_type, documents.build_prompt(case, _speaker(session), own, others))
+
+    fields = {k: v for k, v in reading.fields.model_dump().items() if v not in (None, "", [])}
+    record_type = re.sub(r"[^a-z0-9_]+", "_", reading.document_type.lower()).strip("_") or "document"
+    metadata = dict(fields)
+    if caption:
+        metadata["caption"] = caption
+    metadata["shown_by"] = subject["full_name"] if subject else "Unknown"
+    evidence = db.add_evidence(
+        session["case_id"], record_type, reading.summary.strip(), metadata,
+        source="upload", image=url, image_kind="photo", session_id=session["id"],
+        statement_id=statement_id, subject_id=subject["id"] if subject else None,
+    )
+    db.link_attachment(attachment["id"], evidence["id"])
+
+    # The program's guard: a document dated another day cannot contradict anything about the
+    # incident, and a clash needs a statement in this interview to belong to.
+    on_the_day = documents.iso_date(fields.get("date")) == documents.iso_date(case.get("incident_date"))
+    by_ref = {f"C{c['id']}": c for c in others}
+    raised = []
+    if on_the_day and statement_id is not None:
+        for item in reading.contradicts:
+            claim = by_ref.get(item.source.strip().upper())
+            if claim is None:
+                continue
+            severity = item.severity.strip().upper()
+            raised.append(db.add_finding(
+                session["case_id"], statement_id, claim["id"], None, evidence["id"], "EVIDENCE",
+                severity if severity in ("HIGH", "MEDIUM", "LOW") else "MEDIUM",
+                item.explanation.strip(), None, (item.prior_quote or "").strip() or None,
+            ))
+            db.flag_for_finding(claim["id"], f"Contradicted by {reading.document_type}: {item.explanation.strip()}")
+    findings = [f for f in db.get_findings(statement_id=statement_id) if f["id"] in raised] if raised else []
+    return {"evidence": evidence, "reading": reading.model_dump(), "alibi_findings": findings,
+            "on_incident_date": on_the_day}
 
 
 @app.get("/cases")

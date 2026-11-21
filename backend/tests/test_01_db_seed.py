@@ -20,7 +20,7 @@ with db.connect() as c:
     counts = {t: c.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0] for t in tables}
 print("tables/counts:", counts)
 assert counts["cases"] == 3, counts
-assert len(case["subjects"]) == 2 and len(case["evidence"]) == 5
+assert len(case["subjects"]) == 2 and len(case["evidence"]) == 4
 assert case["subjects"][0]["plate"] == "MH12 AB 4521"
 assert counts["sessions"] == 0, "the demo starts with no interviews"
 assert [c["id"] for c in db.list_cases()][0] == "2026-PUN-0219"
