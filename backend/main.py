@@ -22,7 +22,7 @@ import report_docx
 import stt
 import timeline
 import verification
-from tools.image_gen import OUTPUT_DIR
+from tools.image_gen import OUTPUT_DIR, generate_image as _hf_generate_image
 
 app = FastAPI(title="VERITAS-Lite")
 app.add_middleware(
@@ -41,6 +41,17 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 IMAGE_TYPES = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "image/gif": ".gif"}
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+
+
+class GenerateImageRequest(BaseModel):
+    description: str
+
+
+@app.post("/tools/generate-image")
+def generate_image_endpoint(body: GenerateImageRequest):
+    if not body.description.strip():
+        raise HTTPException(422, "description must not be empty")
+    return _hf_generate_image(body.description)
 
 
 class StartSession(BaseModel):
