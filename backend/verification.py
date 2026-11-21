@@ -79,17 +79,18 @@ Verdicts:
 
 Case records: if the speaker is a witness and describes something physical they saw at a relevant time and place (a vehicle, a person, an object) that the case records do not already hold, propose it as a new case record. Never propose records from a suspect's account of their own movements, and never propose a record that only restates something already on file.
 
-For a proposed record with enough visual detail, suggest an image_prompt for a neutral, clearly illustrative sketch. Use the visible details described by the witness in the full statement. Omit faces, identifiers, and unspecified colors, surroundings, and other details. Avoid surveillance framing or photographic reconstruction. Use null if there are no useful visual details. The illustration suggestion must never inform a verdict.
+For up to two claims with useful visual descriptions, suggest an illustration in the illustrations array. This applies to observations by any speaker, including suspects, and to any verdict. Pick the claim with the most relevant visual details for each distinct subject, even when there is no new case record. Write a short prompt for a neutral sketch using visible details the speaker actually described in the full statement. Omit faces, identifiers, and unspecified details. Avoid surveillance framing or photographic reconstruction. For claims with no useful visual details, omit the suggestion. Never use suggestions to inform verdicts.
 
 When a route check informed a verdict, the reason must state actual_minutes and claimed_minutes, and mention the assumed speed if the result used one. When a record informed it, name that record and what it says. Do not treat a failed tool as evidence.
 
 Every tool result carries a call_id. When you are finished, reply with only a JSON object holding one verdict per claim, listing the call_ids of the results that verdict relied on, plus any proposed case records (usually none):
 {"verdicts": [{"claim": <claim number>, "status": "<verdict>", "reason": "<one or two sentences>", "evidence_calls": [<call_id>, ...]}],
- "records": [{"claim": <claim number>, "record_type": "<snake_case, e.g. vehicle_sighting>", "description": "<one or two sentences>", "metadata": {"time": "<HH:MM if known>", "location": "<place>"}, "image_prompt": "<short visual description or null>"}]}"""
+ "records": [{"claim": <claim number>, "record_type": "<snake_case, e.g. vehicle_sighting>", "description": "<one or two sentences>", "metadata": {"time": "<HH:MM if known>", "location": "<place>"}}],
+ "illustrations": [{"claim": <claim number>, "prompt": "<short visual description>"}]}"""
 
 VERDICT_REMINDER = (
     'Give your verdicts now as JSON only: {"verdicts": [{"claim": <claim number>, '
-    '"status": "...", "reason": "...", "evidence_calls": [<call_id>, ...]}], "records": [...]}'
+    '"status": "...", "reason": "...", "evidence_calls": [<call_id>, ...]}], "records": [...], "illustrations": [...]}'
 )
 
 
@@ -108,9 +109,15 @@ class Record(BaseModel):
     image_prompt: str | None = None
 
 
+class Illustration(BaseModel):
+    claim: int
+    prompt: str
+
+
 class Verdicts(BaseModel):
     verdicts: list[Verdict]
     records: list[Record] = []
+    illustrations: list[Illustration] = []
 
 
 def _dispatch(name: str, args: dict, case_id: str, statement_id: int) -> dict:
@@ -241,4 +248,5 @@ def verify_statement_full(claims: list[dict], statement: str, statement_id: int,
             results.append(outcome(verdict.status, verdict.reason, verdict.evidence_calls))
     parsed = _parse(final_text)
     records = [r.model_dump() for r in parsed.records] if parsed else []
-    return {"results": results, "records": records, "tool_calls": tool_calls}
+    illustrations = [item.model_dump() for item in parsed.illustrations] if parsed else []
+    return {"results": results, "records": records, "illustrations": illustrations, "tool_calls": tool_calls}

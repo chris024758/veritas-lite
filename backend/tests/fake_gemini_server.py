@@ -289,8 +289,12 @@ def _verification(body: dict) -> JSONResponse:
             if claim_type == "VEHICLE":
                 records.append({"claim": number, "record_type": "vehicle_sighting", "description": text,
                                 "metadata": {"time": entities.get("time_start"), "location": entities.get("location"),
-                                             "vehicle_descriptor": entities.get("vehicle")},
-                                "image_prompt": entities.get("vehicle") or text})
+                                             "vehicle_descriptor": entities.get("vehicle")}})
+    illustrations = [
+        {"claim": number, "prompt": entities.get("vehicle") or text}
+        for number, (claim_type, text, entities) in claims.items()
+        if claim_type == "VEHICLE"
+    ][:2]
     verdicts = []
     for number, s in steps.items():
         if number in prose:
@@ -298,7 +302,7 @@ def _verification(body: dict) -> JSONResponse:
         else:
             status, reason = s.get("verdict", ("PENDING", "Ran out of tool rounds."))
         verdicts.append({"claim": number, "status": status, "reason": reason, "evidence_calls": cited[number]})
-    return _ok([{"text": json.dumps({"verdicts": verdicts, "records": records})}])
+    return _ok([{"text": json.dumps({"verdicts": verdicts, "records": records, "illustrations": illustrations})}])
 
 
 def _json_request(body: dict) -> bool:

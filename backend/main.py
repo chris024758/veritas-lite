@@ -4,6 +4,7 @@ import re
 import tempfile
 import uuid
 from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI, Form, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -51,16 +52,19 @@ class IllustrationReview(BaseModel):
     approve: bool
 
 
-def _illustration_record(session_id: int, evidence_id: int) -> dict:
-    record = db.get_illustration_record(session_id, evidence_id)
+IllustrationTarget = Literal["evidence", "claims"]
+
+
+def _illustration_record(session_id: int, item_id: int, target: IllustrationTarget) -> dict:
+    record = db.get_illustration_record(session_id, item_id, target)
     if record is None or not record["illustration_prompt"]:
         raise HTTPException(404, "no illustration suggestion for this record")
     return record
 
 
-@app.post("/sessions/{session_id}/evidence/{evidence_id}/illustration")
-def generate_illustration(session_id: int, evidence_id: int):
-    record = _illustration_record(session_id, evidence_id)
+@app.post("/sessions/{session_id}/{target}/{item_id}/illustration")
+def generate_illustration(session_id: int, target: IllustrationTarget, item_id: int):
+    record = _illustration_record(session_id, item_id, target)
     if record["image"] or record["illustration_preview"]:
         return record
 
@@ -75,21 +79,21 @@ def generate_illustration(session_id: int, evidence_id: int):
         discard_generated_file(preview)
     if not preview or result.get("placeholder"):
         raise HTTPException(502, result.get("note") or "The image provider returned no illustration.")
-    if not db.save_illustration_preview(evidence_id, preview):
+    if not db.save_illustration_preview(item_id, preview, target):
         discard_generated_file(preview)
-    return _illustration_record(session_id, evidence_id)
+    return _illustration_record(session_id, item_id, target)
 
 
-@app.post("/sessions/{session_id}/evidence/{evidence_id}/illustration/review")
-def review_illustration(session_id: int, evidence_id: int, body: IllustrationReview):
-    record = _illustration_record(session_id, evidence_id)
+@app.post("/sessions/{session_id}/{target}/{item_id}/illustration/review")
+def review_illustration(session_id: int, target: IllustrationTarget, item_id: int, body: IllustrationReview):
+    record = _illustration_record(session_id, item_id, target)
     if body.approve and record["image"] and record["image"] == body.preview:
         return record
-    if not db.review_illustration(evidence_id, body.preview, body.approve):
+    if not db.review_illustration(item_id, body.preview, body.approve, target):
         raise HTTPException(409, "this illustration preview has changed")
     if not body.approve:
         discard_generated_file(body.preview)
-    return _illustration_record(session_id, evidence_id)
+    return _illustration_record(session_id, item_id, target)
 
 
 @app.post("/tools/extract-image")
@@ -171,17 +175,20 @@ def _alibi_check(claims: list[dict], text: str, statement_id: int, session: dict
         return [], f"Alibi check did not complete: {exc}"
 
 
-def _keep_records(verified: dict, stored: list[dict], session: dict, statement_id: int) -> list[dict]:
+def _keep_records(verified: dict, stored: list[dict], session: dict, statement_id: int,
+                  prompts: dict[int, str] | None = None) -> list[dict]:
     """Keep case records grounded in a claim and save any illustration suggestion for review."""
     subject = db.get_subject(session["subject_id"]) if session["subject_id"] is not None else None
     if subject is None or subject["role"] == "Suspect":
         return []
+    prompts = prompts if prompts is not None else {}
     kept = []
     for proposal in verified["records"][:3]:
         if not 1 <= proposal["claim"] <= len(stored) or not proposal["description"].strip():
             continue
         record_type = re.sub(r"[^a-z0-9_]+", "_", proposal["record_type"].strip().lower()).strip("_") or "observation"
-        prompt = (proposal.get("image_prompt") or "").strip()[:800]
+        claim_id = stored[proposal["claim"] - 1].get("id")
+        prompt = prompts.pop(claim_id, None) or (proposal.get("image_prompt") or "").strip()[:800]
         metadata = {k: v for k, v in (proposal.get("metadata") or {}).items() if v not in (None, "", [])}
         metadata.setdefault("reported_by", subject["full_name"])
         kept.append(db.add_evidence(
@@ -223,7 +230,17 @@ def run_pipeline(session: dict, text: str) -> dict:
         db.add_finding(session["case_id"], statement["id"], **finding)
         db.flag_for_finding(finding["claim_id"], f"Alibi check: {finding['explanation']}")
 
-    new_records = _keep_records(verified, stored, session, statement["id"])
+    prompts = {}
+    for suggestion in verified.get("illustrations", []):
+        number = suggestion["claim"]
+        prompt = suggestion["prompt"].strip()[:800]
+        if 1 <= number <= len(stored) and prompt:
+            prompts.setdefault(stored[number - 1]["id"], prompt)
+        if len(prompts) == 2:
+            break
+    new_records = _keep_records(verified, stored, session, statement["id"], prompts)
+    for claim_id, prompt in prompts.items():
+        db.save_claim_illustration(claim_id, prompt)
 
     results = db.get_claims(statement["id"])
     findings = db.get_findings(statement_id=statement["id"])

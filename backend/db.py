@@ -54,6 +54,13 @@ CREATE TABLE IF NOT EXISTS claims (
     reason TEXT,
     details_json TEXT NOT NULL DEFAULT '{}'
 );
+-- Claim illustrations stay separate from the claim's verification details.
+CREATE TABLE IF NOT EXISTS claim_illustrations (
+    claim_id INTEGER PRIMARY KEY REFERENCES claims(id) ON DELETE CASCADE,
+    illustration_prompt TEXT NOT NULL,
+    illustration_preview TEXT,
+    image TEXT
+);
 -- Case records. Seeded ones, ones proposed from a witness's statement, and uploaded proof.
 -- A case can hold several records of one type (two sightings, two tickets).
 CREATE TABLE IF NOT EXISTS evidence (
@@ -371,7 +378,21 @@ def get_claims(statement_id: int) -> list[dict]:
         rows = conn.execute(
             "SELECT * FROM claims WHERE statement_id = ? ORDER BY id", (statement_id,)
         ).fetchall()
-    return [_claim_row(r) for r in rows]
+        illustrations = {
+            row["id"]: dict(row)
+            for row in conn.execute(
+                """SELECT c.id, c.statement_id, s.session_id, i.illustration_prompt, i.illustration_preview, i.image
+                   FROM claim_illustrations i JOIN claims c ON c.id = i.claim_id
+                   JOIN statements s ON s.id = c.statement_id WHERE c.statement_id = ?""",
+                (statement_id,),
+            )
+        }
+    return [{**_claim_row(row), "illustration": illustrations.get(row["id"])} for row in rows]
+
+
+def save_claim_illustration(claim_id: int, prompt: str) -> None:
+    with connect() as conn:
+        conn.execute("INSERT INTO claim_illustrations (claim_id, illustration_prompt) VALUES (?, ?)", (claim_id, prompt))
 
 
 def _statement_row(row: sqlite3.Row) -> dict:
@@ -454,31 +475,43 @@ def _evidence_row(row: sqlite3.Row) -> dict:
     return record
 
 
-def get_illustration_record(session_id: int, evidence_id: int) -> dict | None:
+def get_illustration_record(session_id: int, item_id: int, target: str) -> dict | None:
     with connect() as conn:
+        if target == "claims":
+            row = conn.execute(
+                """SELECT c.id, c.statement_id, s.session_id, i.illustration_prompt, i.illustration_preview, i.image
+                   FROM claim_illustrations i JOIN claims c ON c.id = i.claim_id
+                   JOIN statements s ON s.id = c.statement_id WHERE s.session_id = ? AND c.id = ?""",
+                (session_id, item_id),
+            ).fetchone()
+            return dict(row) if row else None
         row = conn.execute(
             "SELECT * FROM evidence WHERE id = ? AND session_id = ? AND source = 'statement'",
-            (evidence_id, session_id),
+            (item_id, session_id),
         ).fetchone()
     return _evidence_row(row) if row else None
 
 
-def save_illustration_preview(evidence_id: int, preview: str) -> bool:
+def save_illustration_preview(item_id: int, preview: str, target: str) -> bool:
+    table, key = ("claim_illustrations", "claim_id") if target == "claims" else ("evidence", "id")
     with connect() as conn:
         return conn.execute(
-            "UPDATE evidence SET illustration_preview = ? WHERE id = ? AND image IS NULL AND illustration_preview IS NULL",
-            (preview, evidence_id),
+            f"UPDATE {table} SET illustration_preview = ? WHERE {key} = ? AND image IS NULL AND illustration_preview IS NULL",
+            (preview, item_id),
         ).rowcount == 1
 
 
-def review_illustration(evidence_id: int, preview: str, approve: bool) -> bool:
+def review_illustration(item_id: int, preview: str, approve: bool, target: str) -> bool:
+    table, key = ("claim_illustrations", "claim_id") if target == "claims" else ("evidence", "id")
+    values = "illustration_preview = NULL"
+    if approve:
+        values += ", image = illustration_preview"
+        if target == "evidence":
+            values += ", image_kind = 'generated'"
     with connect() as conn:
-        if approve:
-            sql = "UPDATE evidence SET image = illustration_preview, image_kind = 'generated', illustration_preview = NULL"
-        else:
-            sql = "UPDATE evidence SET illustration_preview = NULL"
         return conn.execute(
-            sql + " WHERE id = ? AND image IS NULL AND illustration_preview = ?", (evidence_id, preview),
+            f"UPDATE {table} SET {values} WHERE {key} = ? AND image IS NULL AND illustration_preview = ?",
+            (item_id, preview),
         ).rowcount == 1
 
 

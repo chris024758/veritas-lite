@@ -15,6 +15,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 # ---------------------------------------------------------------------------
@@ -91,6 +92,52 @@ class TestSlice3NonBlocking(unittest.TestCase):
 # Slice 4 — generation and approval against a witness record.
 # ---------------------------------------------------------------------------
 class TestSlice4ApiEndpoint(unittest.TestCase):
+    def test_suspect_claim_suggests_an_image_without_creating_case_evidence(self):
+        import json
+
+        from fastapi.testclient import TestClient
+        import db
+        import main
+        import seed
+
+        text = "I saw a black SUV with a round sticker on its rear window."
+        prompt = "Sketch a black SUV with a round rear-window sticker."
+        model = SimpleNamespace(function_calls=[], text=json.dumps({
+            "verdicts": [{"claim": 1, "status": "PENDING", "reason": "No match."}],
+            "illustrations": [{"claim": 1, "prompt": prompt}],
+        }))
+        with (
+            tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder,
+            patch("db.DB_PATH", str(Path(folder) / "claims.db")),
+            patch("main.extraction.extract_claims", return_value=[{"claim_type": "VEHICLE", "text": text, "entities": {}}]),
+            patch("main.gemini_client.generate", return_value=model),
+            patch("main.alibi_check.check", return_value=[]),
+            patch("main.followups.suggest", return_value=[]),
+            patch("main.generate_image", return_value={"image_url": "/generated/review.jpg"}) as generate,
+        ):
+            seed.seed()
+            client = TestClient(main.app)
+            session = db.create_session(seed.CASE_ID, "Suresh Deshmukh")
+            before = db.get_case(seed.CASE_ID)["evidence"]
+            result = client.post(f"/sessions/{session['id']}/statements", json={"text": text})
+            self.assertEqual(result.status_code, 200, result.text)
+            claim, = result.json()["claims"]
+            self.assertEqual(result.json()["new_records"], [])
+            self.assertEqual(claim["illustration"]["illustration_prompt"], prompt)
+            generate.assert_not_called()
+
+            endpoint = f"/sessions/{session['id']}/claims/{claim['id']}/illustration"
+            draft = client.post(endpoint)
+            self.assertEqual(draft.status_code, 200, draft.text)
+            self.assertIsNone(draft.json()["image"])
+            generate.assert_called_once()
+            self.assertTrue(generate.call_args.args[0].endswith(prompt))
+            review = client.post(f"{endpoint}/review", json={"preview": draft.json()["illustration_preview"], "approve": True})
+            self.assertEqual(review.status_code, 200, review.text)
+            saved = db.get_claims(claim["statement_id"])[0]["illustration"]
+            self.assertEqual(saved["image"], "/generated/review.jpg")
+            self.assertEqual(db.get_case(seed.CASE_ID)["evidence"], before)
+
     def test_statement_prompt_is_used_and_only_approved_image_reaches_case_file(self):
         from fastapi.testclient import TestClient
         import db
