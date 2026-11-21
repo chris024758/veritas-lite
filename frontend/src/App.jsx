@@ -8,6 +8,7 @@ import CaseFile from "./CaseFile.jsx";
 import CaseFilePanel from "./CaseFilePanel.jsx";
 import FlagPopover, { FindingBody } from "./FlagPopover.jsx";
 import IntervieweePanel from "./IntervieweePanel.jsx";
+import ImageGenPanel from "./ImageGenPanel.jsx";
 import ReportPanel from "./ReportView.jsx";
 import SidePanel from "./SidePanel.jsx";
 import VeritasLoader from "./VeritasLoader.jsx";
@@ -61,6 +62,7 @@ function Workspace() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [confirm, setConfirm] = useState(null);
   const [reportOpen, setReportOpen] = useState(false);
+  const [imageGenOpen, setImageGenOpen] = useState(false);
   const [reportBusy, setReportBusy] = useState(false);
   const [reportError, setReportError] = useState(null);
   const [snapshot, setSnapshot] = useState(null);
@@ -234,6 +236,7 @@ function Workspace() {
           </nav>
         )}
         <div className="topbar-right">
+          <button type="button" className="secondary" onClick={() => setImageGenOpen(true)}>Image generator</button>
           {active && (
             <FlagPopover
               placement="bottom"
@@ -250,6 +253,13 @@ function Workspace() {
       </header>
 
       {route.name === "cases" && <CaseDirectory />}
+
+      {imageGenOpen && (
+        <Dialog title="Image generator" onCancel={() => setImageGenOpen(false)}>
+          <ImageGenPanel />
+          <div className="actions"><button type="button" className="secondary" onClick={() => setImageGenOpen(false)}>Close</button></div>
+        </Dialog>
+      )}
 
       {caseId && route.view === "file" && (
         <CaseFile caseData={caseData} error={caseError} findings={findings}
