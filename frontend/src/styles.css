@@ -732,10 +732,11 @@ mark.clash { padding: 0 3px; border-radius: 4px; background: var(--alert); color
 .added-record > div { display: grid; gap: 4px; min-width: 0; }
 .read-as { display: block; margin-top: 4px; font-size: 12px; color: var(--text); }
 
-.image-gen-panel form { display: grid; gap: 0.65rem; margin: 1.25rem 0; }
-.image-gen-panel label { font-weight: 600; }
-.image-gen-panel textarea { width: 100%; box-sizing: border-box; resize: vertical; padding: 0.75rem; border: 1px solid #9ca3af; border-radius: 8px; font: inherit; }
-.image-gen-panel form button { justify-self: start; }
+.illustration-review { display: grid; gap: 6px; margin-top: 8px; padding-top: 10px; border-top: 1px solid var(--line); }
+.illustration-review .eyebrow { margin: 0; }
+.illustration-review summary { cursor: pointer; }
+.illustration-review > button { justify-self: start; }
+.illustration-review .actions { margin-top: 0; flex-wrap: wrap; }
 
 .talk-attachment .attachment-check { justify-self: start; }
 .image-finding { min-width: 0; overflow-wrap: anywhere; }
@@ -747,6 +748,6 @@ mark.clash { padding: 0 3px; border-radius: 4px; background: var(--alert); color
 .image-finding-details summary { cursor: pointer; font-weight: 600; }
 .image-finding-details h3 { font-size: 12px; margin-top: 8px; }
 .image-finding .extraction-text { white-space: pre-wrap; }
-.image-gen-result { margin: 1rem 0; }
-.image-gen-result img { display: block; max-width: 100%; max-height: 45vh; object-fit: contain; border-radius: 8px; }
-.image-gen-result figcaption { margin-top: 0.5rem; font-size: 0.85rem; }
+.image-gen-result { margin: 6px 0; }
+.added-record .image-gen-result img { display: block; width: auto; height: auto; max-width: 100%; max-height: 32vh; object-fit: contain; }
+.image-gen-result figcaption { margin-top: 6px; font-size: 12px; }

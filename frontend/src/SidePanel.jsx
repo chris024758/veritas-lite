@@ -4,6 +4,7 @@ import ClaimRows, { Tally } from "./ClaimsTable.jsx";
 import FollowUps from "./FollowUps.jsx";
 import MapsPanel from "./MapsPanel.jsx";
 import ImageExtraction from "./ImageExtraction.jsx";
+import ImageGenPanel from "./ImageGenPanel.jsx";
 import { assetUrl } from "./api.js";
 import { turnLabel } from "./findings.js";
 
@@ -15,10 +16,10 @@ const routeChecks = (statement) =>
 
 // Everything the checks produce, kept out of the conversation: alerts, follow-ups,
 // the maps check, then-vs-now cards, and each claim's verdict.
-function AddedRecords({ statements, attachments }) {
+function AddedRecords({ statements, attachments, onIllustrationChanged }) {
   const latest = statements[statements.length - 1];
   const added = [
-    ...statements.flatMap((s) => (s.new_records ?? []).map((r) => ({ ...r, fresh: s === latest }))),
+    ...statements.flatMap((s) => (s.new_records ?? []).map((r) => ({ ...r, fresh: s === latest, sourceText: s.text }))),
     ...attachments.filter((a) => a.evidence).map((a, i, all) => ({ ...a.evidence, fresh: i === all.length - 1 })),
   ];
   if (added.length === 0) return null;
@@ -35,6 +36,9 @@ function AddedRecords({ statements, attachments }) {
               {r.image_kind === "generated" ? "Image generated from the description · not evidence"
                 : r.image_kind === "photo" ? "Uploaded photo" : ""}
             </p>
+            {r.illustration_prompt && !r.image && (
+              <ImageGenPanel record={r} sourceText={r.sourceText} onChange={onIllustrationChanged} />
+            )}
           </div>
         </article>
       ))}
@@ -42,7 +46,7 @@ function AddedRecords({ statements, attachments }) {
   );
 }
 
-export default function SidePanel({ statements, attachments = [], sessionId, freshFindingIds, onPickQuestion, onJump }) {
+export default function SidePanel({ statements, attachments = [], sessionId, freshFindingIds, onPickQuestion, onJump, onIllustrationChanged }) {
   const [highlighted, setHighlighted] = useState([]);
   const latest = statements[statements.length - 1];
   const findings = statements.flatMap((s) => s.alibi_findings ?? []);
@@ -82,7 +86,7 @@ export default function SidePanel({ statements, attachments = [], sessionId, fre
       <FollowUps questions={latest?.followups} error={latest?.followup_error} onPick={onPickQuestion} onHover={setHighlighted} />
 
       {imageFindings}
-      <AddedRecords statements={statements} attachments={attachments} />
+      <AddedRecords statements={statements} attachments={attachments} onIllustrationChanged={onIllustrationChanged} />
 
       {maps.length > 0 && (
         <section className="side-section">

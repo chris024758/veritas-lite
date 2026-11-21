@@ -1,49 +1,57 @@
 import { useState } from "react";
-import { assetUrl, generateImage } from "./api.js";
+import { assetUrl, generateIllustration, reviewIllustration } from "./api.js";
 
-export default function ImageGenPanel() {
-  const [description, setDescription] = useState("");
-  const [result, setResult] = useState(null);
+export default function ImageGenPanel({ record, sourceText, onChange }) {
   const [error, setError] = useState(null);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState(null);
+  const preview = record.illustration_preview;
 
-  async function submit(event) {
-    event.preventDefault();
-    const prompt = description.trim();
-    if (!prompt || busy) return;
-    setBusy(true);
+  async function run(label, action) {
+    if (busy) return;
+    setBusy(label);
     setError(null);
-    setResult(null);
     try {
-      const response = await generateImage(prompt);
-      if (!response?.image_url) throw new Error(response?.note || response?.detail || "The backend returned no image.");
-      setResult(response);
+      onChange(await action());
     } catch (e) {
       setError(e.message);
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   }
 
   return (
-    <div className="image-gen-panel">
-      <p className="muted">Describe a scene to create an illustration. Generated images are not evidence.</p>
-      <form onSubmit={submit}>
-        <label htmlFor="image-description">Scene description</label>
-        <textarea id="image-description" value={description} onChange={(e) => setDescription(e.target.value)}
-          placeholder="A white scooter outside a shop at night" rows={3} required />
-        <button type="submit" className="primary" disabled={busy || !description.trim()}>
-          {busy ? "Generating…" : "Generate image"}
+    <section className="illustration-review" aria-label="Illustration review">
+      <h4 className="eyebrow">Suggested image prompt</h4>
+      <p className="small">{record.illustration_prompt}</p>
+      {sourceText && <details className="small muted">
+        <summary>Source statement</summary>
+        <p>{sourceText}</p>
+      </details>}
+      {preview ? (
+        <>
+          <figure className="image-gen-result">
+            <img src={assetUrl(preview)} alt="Draft illustration based on the interview statement" />
+            <figcaption className="muted">Draft illustration for review. Approval adds it to the case record as an illustration.</figcaption>
+          </figure>
+          <div className="actions">
+            <button type="button" className="primary" disabled={!!busy}
+              onClick={() => run("Approving…", () => reviewIllustration(record.session_id, record.id, preview, true))}>
+              Approve illustration
+            </button>
+            <button type="button" className="secondary" disabled={!!busy}
+              onClick={() => run("Discarding…", () => reviewIllustration(record.session_id, record.id, preview, false))}>
+              Discard preview
+            </button>
+          </div>
+        </>
+      ) : (
+        <button type="button" className="secondary" disabled={!!busy}
+          onClick={() => run("Generating preview…", () => generateIllustration(record.session_id, record.id))}>
+          Generate preview
         </button>
-      </form>
-      {busy && <p className="muted" role="status">Generating an image; this may take a minute.</p>}
-      {error && <p className="error" role="alert">{error}</p>}
-      {result && (
-        <figure className="image-gen-result">
-          <img src={assetUrl(result.image_url)} alt={result.placeholder ? "Image generation placeholder" : description} />
-          <figcaption>{result.placeholder ? "Placeholder — no image was generated. " : "Generated illustration. "}{result.note}</figcaption>
-        </figure>
       )}
-    </div>
+      {busy && <p className="muted small" role="status">{busy}</p>}
+      {error && <p className="error" role="alert">{error}</p>}
+    </section>
   );
 }

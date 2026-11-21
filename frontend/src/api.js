@@ -24,7 +24,11 @@ function sendJson(method, path, data) {
 }
 const postJson = (path, data) => sendJson("POST", path, data);
 
-export const generateImage = (description) => postJson("/tools/generate-image", { description });
+export const generateIllustration = (sessionId, evidenceId) =>
+  request(`/sessions/${sessionId}/evidence/${evidenceId}/illustration`, { method: "POST" });
+
+export const reviewIllustration = (sessionId, evidenceId, preview, approve) =>
+  postJson(`/sessions/${sessionId}/evidence/${evidenceId}/illustration/review`, { preview, approve });
 
 export const listCases = () => request("/cases");
 
