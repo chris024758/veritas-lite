@@ -1,56 +1,45 @@
-"""HuggingFace Inference API image-generation tool.
-
-Model: black-forest-labs/FLUX.1-dev via Hugging Face Inference Providers.
-
-Design goals (per PRD §7 generate_image contract):
-  - Non-blocking: any error is caught and returned as a plain dict so a failed
-    call never aborts the claim-verification turn.
-  - Graceful degradation: when HF_TOKEN is absent, an SVG placeholder is
-    returned instead of raising.
-  - Testable: the actual HTTP call lives in _hf_generate() so tests can patch
-    it without touching networking.
-
-Environment variables (loaded from backend/.env):
-  HF_TOKEN  – HuggingFace access token (hf_…). Required for real generation.
-
-Compatibility note:
-  The function is decorated with @tool only when langchain_core is importable
-  (some environments carry it; others don't).  Callers that cannot import
-  langchain_core can still call generate_image() directly — it's a plain
-  Python callable in both cases.
-"""
+"""Generate illustrations with FLUX.1 Schnell via Cloudflare Workers AI."""
 from __future__ import annotations
 
+import base64
 import os
-import io
 import uuid
 from html import escape
 from pathlib import Path
 
+import requests
 from dotenv import load_dotenv
-from huggingface_hub import InferenceClient
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
 OUTPUT_DIR = Path(__file__).parent.parent / "generated"
 
 # ---------------------------------------------------------------------------
-# HuggingFace Inference API config
+# Cloudflare Workers AI configuration
 # ---------------------------------------------------------------------------
-_PRIMARY_MODEL = "black-forest-labs/FLUX.1-dev"
+_MODEL = "@cf/black-forest-labs/flux-1-schnell"
 _TIMEOUT = 120
 
 
 # ---------------------------------------------------------------------------
 # Internal: separated so tests can patch it cleanly
 # ---------------------------------------------------------------------------
-def _hf_generate(description: str, token: str) -> bytes:
-    """Generate an image through Hugging Face's provider-aware client."""
-    client = InferenceClient(api_key=token, timeout=_TIMEOUT)
-    image = client.text_to_image(prompt=description, model=_PRIMARY_MODEL)
-    output = io.BytesIO()
-    image.save(output, format="PNG")
-    return output.getvalue()
+def _cloudflare_generate(description: str, account_id: str, token: str) -> bytes:
+    url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{_MODEL}"
+    response = requests.post(
+        url,
+        headers={"Authorization": f"Bearer {token}"},
+        json={"prompt": description},
+        timeout=_TIMEOUT,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if not payload.get("success"):
+        raise ValueError("Cloudflare Workers AI rejected the request.")
+    image = base64.b64decode(payload["result"]["image"], validate=True)
+    if not image.startswith(b"\xff\xd8\xff"):
+        raise ValueError("Cloudflare Workers AI did not return a JPEG.")
+    return image
 
 
 # ---------------------------------------------------------------------------
@@ -63,29 +52,29 @@ def generate_image(description: str) -> dict:
     /generated/<name>) on success, or ``placeholder=True`` / ``success=False``
     on graceful failure.  Never raises.
     """
-    OUTPUT_DIR.mkdir(exist_ok=True)
-    token = os.getenv("HF_TOKEN", "").strip()
-
-    if not token:
-        return _svg_placeholder(
-            description,
-            note="Set HF_TOKEN in backend/.env to enable real image generation.",
-        )
-
+    account_id = os.getenv("CLOUDFLARE_ACCOUNT_ID", "").strip()
+    token = os.getenv("CLOUDFLARE_API_TOKEN", "").strip()
     try:
-        image_bytes = _hf_generate(description, token)
+        OUTPUT_DIR.mkdir(exist_ok=True)
+        if not account_id or not token:
+            return _svg_placeholder(
+                description,
+                note="Set CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN in backend/.env.",
+            )
+        image_bytes = _cloudflare_generate(description, account_id, token)
+        name = f"{uuid.uuid4().hex}.jpg"
+        (OUTPUT_DIR / name).write_bytes(image_bytes)
+    except requests.HTTPError as exc:
+        status = exc.response.status_code
+        return {"success": False, "note": f"Cloudflare Workers AI returned HTTP {status}."}
     except Exception as exc:  # noqa: BLE001
         return {"success": False, "note": f"image generation failed: {exc}"}
-
-    name = f"{uuid.uuid4().hex}.png"
-    dest = OUTPUT_DIR / name
-    dest.write_bytes(image_bytes)
 
     return {
         "image_url": f"/generated/{name}",
         "placeholder": False,
         "description": description,
-        "model": _PRIMARY_MODEL,
+        "model": _MODEL,
         "note": "Illustrative only — not forensic evidence.",
     }
 

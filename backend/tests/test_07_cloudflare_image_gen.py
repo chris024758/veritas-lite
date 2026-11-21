@@ -1,14 +1,15 @@
-"""TDD test suite — HuggingFace image-generation tool.
+"""TDD test suite — Cloudflare Workers AI image-generation tool.
 
 Vertical slices (TDD skill: one test → one impl → repeat):
-  1. Happy path: HF_TOKEN set → image_url returned, placeholder=False
+  1. Happy path: Cloudflare credentials set → image_url returned, placeholder=False
   2. No-token path: placeholder=True, image_url present, no crash
-  3. Non-blocking: HF error → {success: False}, no exception raised
+  3. Non-blocking: Cloudflare error → {success: False}, no exception raised
   4. API endpoint contract: POST /tools/generate-image → 200 + image_url
 
 Run from backend/ directory:
-    .venv\\Scripts\\python.exe -m unittest tests.test_07_hf_image_gen -v
+    .venv\\Scripts\\python.exe -m unittest discover -s tests -p test_07_cloudflare_image_gen.py -v
 """
+import base64
 import os
 import sys
 import tempfile
@@ -23,40 +24,28 @@ _BACKEND = Path(__file__).parent.parent
 sys.path.insert(0, str(_BACKEND))
 
 # Use a throwaway DB so this test never touches the real one
-os.environ.setdefault("VERITAS_DB", os.path.join(tempfile.mkdtemp(), "test_hf.db"))
+os.environ.setdefault("VERITAS_DB", os.path.join(tempfile.mkdtemp(), "test_image_gen.db"))
 
 # ---------------------------------------------------------------------------
-# Shared fixture: a 1×1 valid PNG (parseable by Pillow / browsers)
+# Test bytes with a JPEG signature. The backend serves the bytes as received.
 # ---------------------------------------------------------------------------
-_TINY_PNG = (
-    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
-    b"\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\x0f\x00"
-    b"\x00\x01\x01\x00\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82"
-)
+_TEST_JPEG = b"\xff\xd8\xfftest\xff\xd9"
+_CREDENTIALS = {
+    "CLOUDFLARE_ACCOUNT_ID": "fake-account",
+    "CLOUDFLARE_API_TOKEN": "fake-token",
+}
 
 
 # ---------------------------------------------------------------------------
 # Slice 1 — happy path: token + successful HF call
 # ---------------------------------------------------------------------------
 class TestSlice1HappyPath(unittest.TestCase):
-    def test_provider_client_receives_prompt_and_returns_png(self):
-        import tools.image_gen as img
-
-        with patch("tools.image_gen.InferenceClient") as client_class:
-            generated = client_class.return_value.text_to_image.return_value
-            generated.save.side_effect = lambda output, format: output.write(_TINY_PNG)
-            self.assertEqual(img._hf_generate("a scooter", "fake-token"), _TINY_PNG)
-            client_class.assert_called_once_with(api_key="fake-token", timeout=120)
-            client_class.return_value.text_to_image.assert_called_once_with(
-                prompt="a scooter", model=img._PRIMARY_MODEL
-            )
-
     def test_returns_image_url_and_not_placeholder(self):
-        """With HF_TOKEN set and HF returning bytes, result has image_url."""
+        """With credentials set and Cloudflare returning bytes, result has image_url."""
         import tools.image_gen as img
 
-        with patch.dict(os.environ, {"HF_TOKEN": "hf_fake_token"}):
-            with patch("tools.image_gen._hf_generate", return_value=_TINY_PNG):
+        with patch.dict(os.environ, _CREDENTIALS):
+            with patch("tools.image_gen._cloudflare_generate", return_value=_TEST_JPEG):
                 result = img.generate_image("a white scooter at night")
 
         self.assertIn("image_url", result, f"Expected image_url: {result}")
@@ -70,10 +59,10 @@ class TestSlice1HappyPath(unittest.TestCase):
 # ---------------------------------------------------------------------------
 class TestSlice2NoToken(unittest.TestCase):
     def test_no_token_returns_placeholder(self):
-        """Without HF_TOKEN the tool degrades to an SVG placeholder (no crash)."""
+        """Without Cloudflare credentials the tool degrades to an SVG placeholder (no crash)."""
         import tools.image_gen as img
 
-        clean_env = {k: v for k, v in os.environ.items() if k != "HF_TOKEN"}
+        clean_env = {k: v for k, v in os.environ.items() if k not in _CREDENTIALS}
         with patch.dict(os.environ, clean_env, clear=True):
             result = img.generate_image("a shop at night")
 
@@ -83,15 +72,15 @@ class TestSlice2NoToken(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# Slice 3 — non-blocking: HF error must not raise
+# Slice 3 — non-blocking: Cloudflare error must not raise
 # ---------------------------------------------------------------------------
 class TestSlice3NonBlocking(unittest.TestCase):
-    def test_hf_error_returns_failure_dict_not_exception(self):
-        """A HF API error must be caught; function returns {success: False}."""
+    def test_provider_error_returns_failure_dict_not_exception(self):
+        """A Cloudflare error must be caught; function returns {success: False}."""
         import tools.image_gen as img
 
-        with patch.dict(os.environ, {"HF_TOKEN": "hf_fake_token"}):
-            with patch("tools.image_gen._hf_generate", side_effect=RuntimeError("HF 503")):
+        with patch.dict(os.environ, _CREDENTIALS):
+            with patch("tools.image_gen._cloudflare_generate", side_effect=RuntimeError("Cloudflare 503")):
                 result = img.generate_image("some scene")
 
         self.assertFalse(result.get("success", True), f"Expected success=False: {result}")
@@ -113,17 +102,29 @@ class TestSlice4ApiEndpoint(unittest.TestCase):
 
         client = TestClient(app)
 
-        with patch.dict(os.environ, {"HF_TOKEN": "hf_fake_token"}):
-            with patch("tools.image_gen._hf_generate", return_value=_TINY_PNG):
-                resp = client.post(
-                    "/tools/generate-image",
-                    json={"description": "a white scooter near a shop shutter"},
-                )
+        with patch.dict(os.environ, _CREDENTIALS), patch("tools.image_gen.requests.post") as post:
+            post.return_value.json.return_value = {
+                "success": True,
+                "result": {"image": base64.b64encode(_TEST_JPEG).decode("ascii")},
+            }
+            prompt = "a white scooter near a shop shutter"
+            resp = client.post("/tools/generate-image", json={"description": prompt})
 
         self.assertEqual(resp.status_code, 200, resp.text)
         body = resp.json()
-        self.assertIn("image_url", body, f"Response: {body}")
-        self.assertFalse(body.get("placeholder", False))
+        self.assertFalse(body["placeholder"])
+        self.assertEqual(body["model"], "@cf/black-forest-labs/flux-1-schnell")
+        post.assert_called_once_with(
+            "https://api.cloudflare.com/client/v4/accounts/fake-account/ai/run/"
+            "@cf/black-forest-labs/flux-1-schnell",
+            headers={"Authorization": "Bearer fake-token"},
+            json={"prompt": prompt},
+            timeout=120,
+        )
+        image = client.get(body["image_url"])
+        self.assertEqual(image.status_code, 200)
+        self.assertEqual(image.headers["content-type"], "image/jpeg")
+        self.assertEqual(image.content, _TEST_JPEG)
 
 
 if __name__ == "__main__":

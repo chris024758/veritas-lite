@@ -22,7 +22,7 @@ import report_docx
 import stt
 import timeline
 import verification
-from tools.image_gen import OUTPUT_DIR, generate_image as _hf_generate_image
+from tools.image_gen import OUTPUT_DIR, generate_image
 
 app = FastAPI(title="VERITAS-Lite")
 app.add_middleware(
@@ -51,7 +51,7 @@ class GenerateImageRequest(BaseModel):
 def generate_image_endpoint(body: GenerateImageRequest):
     if not body.description.strip():
         raise HTTPException(422, "description must not be empty")
-    return _hf_generate_image(body.description)
+    return generate_image(body.description)
 
 
 class StartSession(BaseModel):
