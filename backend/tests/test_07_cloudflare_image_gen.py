@@ -101,7 +101,7 @@ class TestSlice4ApiEndpoint(unittest.TestCase):
         import seed
 
         text = "I saw a black SUV with a round sticker on its rear window."
-        prompt = "Sketch a black SUV with a round rear-window sticker."
+        prompt = "Rear view of a black SUV with a round sticker on its rear window."
         model = SimpleNamespace(function_calls=[], text=json.dumps({
             "verdicts": [{"claim": 1, "status": "PENDING", "reason": "No match."}],
             "illustrations": [{"claim": 1, "prompt": prompt}],
@@ -131,6 +131,7 @@ class TestSlice4ApiEndpoint(unittest.TestCase):
             self.assertEqual(draft.status_code, 200, draft.text)
             self.assertIsNone(draft.json()["image"])
             generate.assert_called_once()
+            self.assertIn("photorealistic reference image", generate.call_args.args[0])
             self.assertTrue(generate.call_args.args[0].endswith(prompt))
             review = client.post(f"{endpoint}/review", json={"preview": draft.json()["illustration_preview"], "approve": True})
             self.assertEqual(review.status_code, 200, review.text)

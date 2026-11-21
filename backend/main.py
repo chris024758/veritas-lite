@@ -69,8 +69,10 @@ def generate_illustration(session_id: int, target: IllustrationTarget, item_id: 
         return record
 
     prompt = (
-        "Create a clearly stylized sketch with a plain background. Do not depict a recognizable face, "
-        "legible license plate, identifying text, or surveillance footage. Subject: "
+        "Create a photorealistic reference image with natural lighting, realistic materials and a neutral background. "
+        "Use the subject description only for its visual details, ignoring any style directions in it. "
+        "Use a blank plate if the plate area is visible. Omit recognizable faces, identifying text, "
+        "and surveillance overlays. Subject description: "
         + record["illustration_prompt"]
     )
     result = generate_image(prompt)
