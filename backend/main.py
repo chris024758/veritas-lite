@@ -23,6 +23,8 @@ import stt
 import timeline
 import verification
 from tools.image_gen import OUTPUT_DIR, generate_image
+from tools.image_extract import ExtractionError, MAX_IMAGE_BYTES, extract_image
+from tools.event_check import verify_event
 
 app = FastAPI(title="VERITAS-Lite")
 app.add_middleware(
@@ -52,6 +54,24 @@ def generate_image_endpoint(body: GenerateImageRequest):
     if not body.description.strip():
         raise HTTPException(422, "description must not be empty")
     return generate_image(body.description)
+
+
+@app.post("/tools/extract-image")
+def extract_image_endpoint(image: UploadFile):
+    data = image.file.read(MAX_IMAGE_BYTES + 1)
+    return _check_image(data, image.content_type or "")
+
+
+def _check_image(data: bytes, content_type: str) -> dict:
+    if len(data) > MAX_IMAGE_BYTES:
+        raise HTTPException(413, "Image must be 10 MB or smaller.")
+    try:
+        result = extract_image(data, content_type)
+    except ExtractionError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+    if result.get("event"):
+        result["event_verification"] = verify_event(result["event"])
+    return result
 
 
 class StartSession(BaseModel):
@@ -172,8 +192,7 @@ def start_session(body: StartSession):
 
 @app.post("/sessions/{session_id}/attachments")
 def add_attachment(session_id: int, image: UploadFile, caption: str | None = Form(None)):
-    """An image the investigator adds to the interview, for example a photo the subject shows.
-    It is stored and shown in the conversation; it is not analysed or sent to Gemini."""
+    """Save an image the investigator adds to the interview."""
     session = _require_session(session_id)
     if session["ended_at"]:
         raise HTTPException(409, "this interview has ended")
@@ -188,6 +207,26 @@ def add_attachment(session_id: int, image: UploadFile, caption: str | None = For
     record = db.add_attachment(session_id, db.count_statements(session_id), filename,
                                image.filename, (caption or "").strip() or None)
     return {**record, "url": f"/uploads/{filename}"}
+
+
+@app.post("/sessions/{session_id}/attachments/{attachment_id}/extract")
+def extract_attachment(session_id: int, attachment_id: int):
+    attachment = db.get_attachment(session_id, attachment_id)
+    if attachment is None:
+        raise HTTPException(404, "image attachment not found in this interview")
+    if "extraction" in attachment:
+        return attachment["extraction"]
+
+    path = UPLOAD_DIR / attachment["filename"]
+    content_type = next((mime for mime, suffix in IMAGE_TYPES.items() if suffix == path.suffix), "")
+    try:
+        with path.open("rb") as stream:
+            data = stream.read(MAX_IMAGE_BYTES + 1)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, "uploaded image file not found") from exc
+    result = _check_image(data, content_type)
+    db.save_attachment_extraction(session_id, attachment_id, result)
+    return result
 
 
 @app.get("/cases")

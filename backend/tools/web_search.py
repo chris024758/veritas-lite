@@ -7,7 +7,7 @@ from google.genai import errors, types
 import gemini_client
 
 
-def web_search(query: str) -> dict:
+def web_search(query: str, *, cited_only: bool = False) -> dict:
     try:
         response = gemini_client.generate(
             gemini_client.MODEL,
@@ -20,7 +20,11 @@ def web_search(query: str) -> dict:
     sources = []
     candidate = response.candidates[0] if response.candidates else None
     metadata = candidate.grounding_metadata if candidate else None
-    for chunk in (metadata.grounding_chunks or []) if metadata else []:
-        if chunk.web:
+    cited_indices = set()
+    if cited_only and metadata:
+        for support in metadata.grounding_supports or []:
+            cited_indices.update(support.grounding_chunk_indices or [])
+    for index, chunk in enumerate((metadata.grounding_chunks or []) if metadata else []):
+        if chunk.web and (not cited_only or index in cited_indices):
             sources.append({"title": chunk.web.title, "uri": chunk.web.uri})
     return {"query": query, "answer": response.text, "sources": sources}

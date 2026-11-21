@@ -283,7 +283,14 @@ function Workspace() {
                   sessionId={active.sessionId}
                   statements={active.statements}
                   attachments={active.attachments}
-                  onAttached={(a) => setInterview((iv) => ({ ...iv, attachments: [...iv.attachments, a] }))}
+                  onAttached={(a) => setInterview((iv) => {
+                    if (iv?.sessionId !== a.session_id) return iv;
+                    const exists = iv.attachments.some((image) => image.id === a.id);
+                    const attachments = exists
+                      ? iv.attachments.map((image) => image.id === a.id ? a : image)
+                      : [...iv.attachments, a];
+                    return { ...iv, attachments };
+                  })}
                   asking={asking}
                   onClearAsking={() => setAsking(null)}
                   onSend={send}
@@ -297,7 +304,7 @@ function Workspace() {
             </main>
 
             {active ? (
-              <SidePanel statements={active.statements} sessionId={active.sessionId} freshFindingIds={freshFindingIds}
+              <SidePanel statements={active.statements} attachments={active.attachments} sessionId={active.sessionId} freshFindingIds={freshFindingIds}
                 onPickQuestion={setAsking} onJump={jumpTo} />
             ) : (
               <aside className="side glass" aria-label="Findings">

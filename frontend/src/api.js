@@ -47,13 +47,15 @@ export function transcribe(sessionId, blob) {
   return request(`/sessions/${sessionId}/transcribe`, { method: "POST", body: form });
 }
 
-// An image added to the interview: stored and shown, never sent to the LLM.
 export function addAttachment(sessionId, file, caption) {
   const form = new FormData();
   form.append("image", file, file.name);
   if (caption) form.append("caption", caption);
   return request(`/sessions/${sessionId}/attachments`, { method: "POST", body: form });
 }
+
+export const extractAttachment = (sessionId, attachmentId) =>
+  request(`/sessions/${sessionId}/attachments/${attachmentId}/extract`, { method: "POST" });
 
 export const assetUrl = (path) => (path ? `${API_URL}${path}` : null);
 

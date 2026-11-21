@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { addAttachment, assetUrl, transcribe } from "./api.js";
+import { addAttachment, assetUrl, extractAttachment, transcribe } from "./api.js";
+import { eventVerdict } from "./ImageExtraction.jsx";
 import VeritasLoader from "./VeritasLoader.jsx";
 import { turnLabel } from "./findings.js";
 
@@ -57,12 +58,28 @@ function Bars({ bars }) {
   );
 }
 
-function Attachment({ a }) {
+function Attachment({ a, checkingId, uploading, onCheck }) {
+  const check = a.extraction?.event_verification;
+  function showFinding() {
+    const finding = document.getElementById(`image-finding-${a.id}`);
+    finding?.focus({ preventScroll: true });
+    finding?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
   return (
     <li className="talk-attachment">
       <figure>
         <img src={assetUrl(a.url ?? `/uploads/${a.filename}`)} alt={a.caption || a.original_name || "Added image"} />
         <figcaption><span className="tag">Image added</span> {a.caption || a.original_name}</figcaption>
+        {a.extraction ? (
+          <button type="button" className="secondary attachment-check" onClick={showFinding} aria-controls={`image-finding-${a.id}`}>
+            {check ? eventVerdict(check.verified) : "View extracted details"}
+          </button>
+        ) : (
+          <button type="button" className="secondary attachment-check" disabled={uploading || checkingId !== null}
+            onClick={() => onCheck(a)}>
+            {checkingId === a.id ? "Checking image…" : "Extract & check"}
+          </button>
+        )}
       </figure>
     </li>
   );
@@ -77,12 +94,15 @@ export default function VoiceStage({ subject, sessionId, statements, attachments
   const [demoOpen, setDemoOpen] = useState(false);
   const [bars, setBars] = useState(() => Array(BAR_COUNT).fill(0));
   const [pendingImage, setPendingImage] = useState(null); // {file, preview, caption, busy}
+  const [checkingId, setCheckingId] = useState(null);
+  const preview = pendingImage?.preview;
   const fileRef = useRef(null);
   const media = useRef({});
   const endRef = useRef(null);
 
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" }); }, [statements.length, draft, busy]);
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" }); }, [statements.length, attachments.length, draft, busy]);
   useEffect(() => () => stopEverything(), []);
+  useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
 
   function stopEverything() {
     const m = media.current;
@@ -184,23 +204,43 @@ export default function VoiceStage({ subject, sessionId, statements, attachments
     e.target.value = "";
     if (!file) return;
     if (!file.type.startsWith("image/")) { setError("Only images can be added."); return; }
+    setError(null);
     setPendingImage({ file, preview: URL.createObjectURL(file), caption: "", busy: false });
   }
 
   async function uploadImage() {
+    if (!pendingImage || pendingImage.busy || checkingId !== null) return;
+    setError(null);
     setPendingImage((p) => ({ ...p, busy: true }));
     try {
       const saved = await addAttachment(sessionId, pendingImage.file, pendingImage.caption.trim());
       onAttached(saved);
-      URL.revokeObjectURL(pendingImage.preview);
       setPendingImage(null);
+      await checkAttachment(saved);
     } catch (e) {
       setError(e.message);
       setPendingImage((p) => ({ ...p, busy: false }));
     }
   }
 
-  const byTurn = (n) => attachments.filter((a) => a.after_turn === n);
+  async function checkAttachment(attachment) {
+    if (checkingId !== null) return;
+    setCheckingId(attachment.id);
+    setError(null);
+    try {
+      const extraction = await extractAttachment(sessionId, attachment.id);
+      onAttached({ ...attachment, extraction });
+    } catch (e) {
+      setError(`Image added. Extraction failed: ${e.message}`);
+    } finally {
+      setCheckingId(null);
+    }
+  }
+
+  const byTurn = (n) => attachments.filter((a) => a.after_turn === n).map((a) => (
+    <Attachment key={a.id} a={a} checkingId={checkingId} uploading={pendingImage?.busy}
+      onCheck={checkAttachment} />
+  ));
 
   const canTalk = !ended && !busy && draft === null && state !== "transcribing";
 
@@ -210,7 +250,7 @@ export default function VoiceStage({ subject, sessionId, statements, attachments
         {statements.length === 0 && draft === null && state === "ready" && !busy && !ended && (
           <li className="talk-empty muted">Click the mic and let {subject.full_name.split(" ")[0]} speak. You'll see the text before anything is checked.</li>
         )}
-        {byTurn(0).map((a) => <Attachment key={`a${a.id}`} a={a} />)}
+        {byTurn(0)}
         {statements.map((s, index) => {
           const quotes = (s.alibi_findings ?? []).map((f) => f.new_quote);
           return [
@@ -221,7 +261,7 @@ export default function VoiceStage({ subject, sessionId, statements, attachments
                 <span><Marked text={s.text} quotes={quotes} /></span>
               </p>
             </li>,
-            ...byTurn(index + 1).map((a) => <Attachment key={`a${a.id}`} a={a} />),
+            ...byTurn(index + 1),
           ];
         })}
         {busy && (
@@ -270,18 +310,22 @@ export default function VoiceStage({ subject, sessionId, statements, attachments
               <img src={pendingImage.preview} alt="Selected" />
               <div>
                 <input value={pendingImage.caption} placeholder="Caption, e.g. photo shown by the subject"
+                  aria-label="Image caption" disabled={pendingImage.busy}
                   onChange={(e) => setPendingImage((p) => ({ ...p, caption: e.target.value }))} autoFocus />
-                <p className="muted small">Added to the interview record. It is not checked by the AI.</p>
+                <p className="muted small">Adds the image to the interview and sends it to Groq. Detected events are checked on the web.</p>
                 <div className="actions">
-                  <button type="button" className="primary" onClick={uploadImage} disabled={pendingImage.busy}>Add image</button>
-                  <button type="button" className="secondary" onClick={() => { URL.revokeObjectURL(pendingImage.preview); setPendingImage(null); }}>Cancel</button>
+                  <button type="button" className="primary" onClick={uploadImage} disabled={pendingImage.busy || checkingId !== null}>
+                    {pendingImage.busy ? "Adding image…" : "Add & check"}
+                  </button>
+                  <button type="button" className="secondary" disabled={pendingImage.busy} onClick={() => setPendingImage(null)}>Cancel</button>
                 </div>
               </div>
             </div>
           )}
           <div className="orb-row">
           <button type="button" className="plus-btn" onClick={() => fileRef.current?.click()}
-            disabled={!canTalk || !!pendingImage} aria-label="Add an image" title="Add an image">+</button>
+            disabled={!canTalk || state !== "ready" || !!pendingImage || checkingId !== null}
+            aria-label="Add an image" title="Add an image">+</button>
           <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden onChange={pickImage} />
           <button
             type="button"

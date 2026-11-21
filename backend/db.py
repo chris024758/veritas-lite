@@ -87,7 +87,7 @@ CREATE TABLE IF NOT EXISTS evidence_items (
     image TEXT,
     UNIQUE (evidence_id, name)
 );
--- Images the investigator adds during an interview. Stored, shown, never sent to Gemini.
+-- Images the investigator adds during an interview.
 CREATE TABLE IF NOT EXISTS attachments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id INTEGER NOT NULL REFERENCES sessions(id),
@@ -125,6 +125,7 @@ MIGRATIONS = [
     ("subjects", "relation", "TEXT"),
     ("cases", "status", "TEXT NOT NULL DEFAULT 'Open'"),
     ("evidence", "image", "TEXT"),
+    ("attachments", "extraction_json", "TEXT"),
 ]
 
 VALID_ROLES = {"Suspect", "Witness", "Victim", "Other"}
@@ -344,13 +345,34 @@ def add_attachment(session_id: int, after_turn: int, filename: str, original_nam
             (session_id, after_turn, filename, original_name, caption, datetime.now(timezone.utc).isoformat()),
         )
         row = conn.execute("SELECT * FROM attachments WHERE id = ?", (cur.lastrowid,)).fetchone()
-    return dict(row)
+    return _attachment_row(row)
+
+
+def _attachment_row(row: sqlite3.Row) -> dict:
+    attachment = dict(row)
+    extraction = attachment.pop("extraction_json", None)
+    if extraction is not None:
+        attachment["extraction"] = json.loads(extraction)
+    return attachment
+
+
+def get_attachment(session_id: int, attachment_id: int) -> dict | None:
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM attachments WHERE session_id = ? AND id = ?",
+                           (session_id, attachment_id)).fetchone()
+    return _attachment_row(row) if row is not None else None
+
+
+def save_attachment_extraction(session_id: int, attachment_id: int, result: dict) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE attachments SET extraction_json = ? WHERE session_id = ? AND id = ?",
+                     (json.dumps(result), session_id, attachment_id))
 
 
 def get_attachments(session_id: int) -> list[dict]:
     with connect() as conn:
         rows = conn.execute("SELECT * FROM attachments WHERE session_id = ? ORDER BY id", (session_id,)).fetchall()
-    return [dict(r) for r in rows]
+    return [_attachment_row(row) for row in rows]
 
 
 def count_statements(session_id: int) -> int:

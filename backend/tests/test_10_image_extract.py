@@ -1,0 +1,83 @@
+"""Image extraction request and API behavior without contacting Groq."""
+import json
+import os
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+os.environ.setdefault("VERITAS_DB", os.path.join(tempfile.mkdtemp(), "test.db"))
+
+from tools.image_extract import ExtractionError, extract_image
+
+PNG = b"\x89PNG\r\n\x1a\nimage"
+RESULT = {"transcribed_text": "MH12 AB", "observations": ["White scooter"], "uncertainties": ["Plate is partly obscured"]}
+
+
+class ImageExtractionTests(unittest.TestCase):
+    @patch("tools.image_extract.requests.post")
+    @patch.dict(os.environ, {"GROQ_API_KEY": "test-key", "GROQ_VISION_MODEL": "test-model"})
+    def test_image_is_sent_to_groq_and_result_validated(self, post):
+        post.return_value.json.return_value = {"choices": [{"message": {"content": json.dumps(RESULT)}}]}
+        result = extract_image(PNG, "image/png")
+        self.assertEqual(result, {"model": "test-model", **RESULT})
+        request = post.call_args.kwargs["json"]
+        self.assertEqual(request["response_format"], {"type": "json_object"})
+        self.assertTrue(request["messages"][0]["content"][1]["image_url"]["url"].startswith("data:image/png;base64,"))
+
+    def test_invalid_image_and_missing_key(self):
+        with self.assertRaises(ExtractionError) as invalid:
+            extract_image(b"not an image", "image/png")
+        self.assertEqual(invalid.exception.status_code, 415)
+        with patch.dict(os.environ, {"GROQ_API_KEY": ""}):
+            with self.assertRaises(ExtractionError) as missing:
+                extract_image(PNG, "image/png")
+        self.assertEqual(missing.exception.status_code, 503)
+
+    @patch("tools.image_extract.requests.post")
+    @patch.dict(os.environ, {"GROQ_API_KEY": "test-key"})
+    def test_invalid_model_result_is_rejected(self, post):
+        post.return_value.json.return_value = {"choices": [{"message": {"content": '{"observations": "bad"}'}}]}
+        with self.assertRaises(ExtractionError):
+            extract_image(PNG, "image/png")
+
+    def test_api_accepts_upload_and_rejects_invalid_type(self):
+        from fastapi.testclient import TestClient
+        from main import app
+        client = TestClient(app)
+        with patch("main.extract_image", return_value={"model": "test", **RESULT}):
+            response = client.post("/tools/extract-image", files={"image": ("test.png", PNG, "image/png")})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["transcribed_text"], "MH12 AB")
+        response = client.post("/tools/extract-image", files={"image": ("bad.svg", b"<svg/>", "image/svg+xml")})
+        self.assertEqual(response.status_code, 415)
+
+    def test_event_upload_checks_web_and_requires_cited_evidence_for_a_flag(self):
+        from fastapi.testclient import TestClient
+        from main import app
+
+        event = {"title": "Demo concert", "date": "12 July 2026", "venue": "Demo Hall"}
+        source = {"title": "Demo Hall", "uri": "https://example.org/concert"}
+        client = TestClient(app)
+        cases = [
+            ("CONFIRMED\nThe venue reported that the concert took place.", [source], True),
+            ("CONTRADICTED\nThe venue cancelled the concert.", [source], False),
+            ("CONTRADICTED\nNo listing found.", [], None),
+        ]
+        for answer, sources, expected in cases:
+            with self.subTest(answer=answer):
+                with (
+                    patch("main.extract_image", return_value={**RESULT, "event": event}),
+                    patch("tools.event_check.gemini_client.has_key", return_value=True),
+                    patch("tools.event_check.web_search", return_value={"answer": answer, "sources": sources}) as search,
+                ):
+                    response = client.post("/tools/extract-image", files={"image": ("test.png", PNG, "image/png")})
+                self.assertEqual(response.status_code, 200)
+                self.assertIs(response.json()["event_verification"]["verified"], expected)
+                self.assertIn(event["date"], search.call_args.args[0])
+
+
+if __name__ == "__main__":
+    unittest.main()

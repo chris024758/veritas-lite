@@ -3,6 +3,7 @@ import { AlibiBanner, ThenVsNow } from "./AlibiAlert.jsx";
 import ClaimRows, { Tally } from "./ClaimsTable.jsx";
 import FollowUps from "./FollowUps.jsx";
 import MapsPanel from "./MapsPanel.jsx";
+import ImageExtraction from "./ImageExtraction.jsx";
 import { turnLabel } from "./findings.js";
 
 const routeChecks = (statement) =>
@@ -13,7 +14,7 @@ const routeChecks = (statement) =>
 
 // Everything the checks produce, kept out of the conversation: alerts, follow-ups,
 // the maps check, then-vs-now cards, and each claim's verdict.
-export default function SidePanel({ statements, sessionId, freshFindingIds, onPickQuestion, onJump }) {
+export default function SidePanel({ statements, attachments = [], sessionId, freshFindingIds, onPickQuestion, onJump }) {
   const [highlighted, setHighlighted] = useState([]);
   const latest = statements[statements.length - 1];
   const findings = statements.flatMap((s) => s.alibi_findings ?? []);
@@ -22,15 +23,21 @@ export default function SidePanel({ statements, sessionId, freshFindingIds, onPi
   const maps = [...statements].reverse().flatMap((s) => routeChecks(s)
     .sort((a, b) => Number(!!b.result.exceeds_tolerance) - Number(!!a.result.exceeds_tolerance))
     .map((m) => ({ ...m, fresh: s === latest })));
+  const imageChecks = attachments.filter((a) => a.extraction).reverse();
+  const imageFindings = imageChecks.length > 0 && (
+    <section className="side-section" aria-label="Image checks" aria-live="polite">
+      {imageChecks.map((attachment) => <ImageExtraction key={attachment.id} attachment={attachment} />)}
+    </section>
+  );
 
   if (statements.length === 0) {
     return (
       <aside className="side glass" id="findings" aria-label="Findings">
         <h2 className="side-title">Findings</h2>
-        <p className="muted small">
+        {imageFindings || <p className="muted small">
           Each answer is checked against the case records, the person's earlier answers and other people's statements.
           Clashes, maps checks, suggested questions and verdicts appear here.
-        </p>
+        </p>}
       </aside>
     );
   }
@@ -43,6 +50,8 @@ export default function SidePanel({ statements, sessionId, freshFindingIds, onPi
       </div>
       <AlibiBanner findings={latest?.alibi_findings ?? []} pulseKey={latest?.id} />
       <FollowUps questions={latest?.followups} error={latest?.followup_error} onPick={onPickQuestion} onHover={setHighlighted} />
+
+      {imageFindings}
 
       {maps.length > 0 && (
         <section className="side-section">
