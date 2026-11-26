@@ -60,8 +60,8 @@ def generate(session_id: int) -> dict:
     summary, summary_error = None, None
     try:
         summary = _summarise(build_prompt(case, subject, history, findings)).model_dump()
-    except (errors.APIError, gemini_client.GeminiNotConfigured, ValueError) as exc:
-        summary_error = f"Summary could not be generated: {exc}"
+    except (errors.APIError, gemini_client.GeminiNotConfigured, ValueError):
+        summary_error = "Summary could not be generated."
 
     claims = [c for s in history["statements"] for c in s["claims"]]
     report = {

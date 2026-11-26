@@ -10,9 +10,11 @@ from pathlib import Path
 import requests
 from dotenv import load_dotenv
 
+import db
+
 load_dotenv(Path(__file__).parent.parent / ".env")
 
-OUTPUT_DIR = Path(__file__).parent.parent / "generated"
+OUTPUT_DIR = Path(os.getenv("VERITAS_GENERATED", Path(__file__).parent.parent / "generated"))
 
 # ---------------------------------------------------------------------------
 # Cloudflare Workers AI configuration
@@ -45,7 +47,7 @@ def _cloudflare_generate(description: str, account_id: str, token: str) -> bytes
 # ---------------------------------------------------------------------------
 # Public callable — works with or without langchain
 # ---------------------------------------------------------------------------
-def generate_image(description: str) -> dict:
+def generate_image(description: str, *, owner: str | None = None) -> dict:
     """Generate a quick illustrative image from a text description.
 
     Returns a dict with at minimum an ``image_url`` key (served from
@@ -55,20 +57,20 @@ def generate_image(description: str) -> dict:
     account_id = os.getenv("CLOUDFLARE_ACCOUNT_ID", "").strip()
     token = os.getenv("CLOUDFLARE_API_TOKEN", "").strip()
     try:
-        OUTPUT_DIR.mkdir(exist_ok=True)
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         if not account_id or not token:
             return _svg_placeholder(
                 description,
                 note="Set CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN in backend/.env.",
+                owner=owner,
             )
         image_bytes = _cloudflare_generate(description, account_id, token)
-        name = f"{uuid.uuid4().hex}.jpg"
-        (OUTPUT_DIR / name).write_bytes(image_bytes)
+        name = _store_image(image_bytes, ".jpg", owner)
     except requests.HTTPError as exc:
-        status = exc.response.status_code
+        status = exc.response.status_code if exc.response is not None else 502
         return {"success": False, "note": f"Cloudflare Workers AI returned HTTP {status}."}
-    except Exception as exc:  # noqa: BLE001
-        return {"success": False, "note": f"image generation failed: {exc}"}
+    except Exception:  # noqa: BLE001
+        return {"success": False, "note": "Image generation failed."}
 
     return {
         "image_url": f"/generated/{name}",
@@ -98,8 +100,21 @@ except ModuleNotFoundError:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-def _svg_placeholder(description: str, note: str = "") -> dict:
-    name = f"{uuid.uuid4().hex}.svg"
+def _store_image(data: bytes, suffix: str, owner: str | None) -> str:
+    name = f"{uuid.uuid4().hex}{suffix}"
+    path = OUTPUT_DIR / name
+    try:
+        path.write_bytes(data)
+        if owner is not None:
+            with db.connect() as conn:
+                conn.execute("INSERT INTO generated_images VALUES (?, ?)", (name, owner))
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
+    return name
+
+
+def _svg_placeholder(description: str, note: str = "", owner: str | None = None) -> dict:
     svg = (
         "<svg xmlns='http://www.w3.org/2000/svg' width='512' height='288'>"
         "<rect width='100%' height='100%' fill='#e5e7eb'/>"
@@ -111,7 +126,7 @@ def _svg_placeholder(description: str, note: str = "") -> dict:
         f"{escape(note[:80])}</text>"
         "</svg>"
     )
-    (OUTPUT_DIR / name).write_text(svg, encoding="utf-8")
+    name = _store_image(svg.encode(), ".svg", owner)
     return {
         "image_url": f"/generated/{name}",
         "placeholder": True,

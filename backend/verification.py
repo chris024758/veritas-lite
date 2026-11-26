@@ -127,7 +127,7 @@ class Verdicts(BaseModel):
     records: list[Record] = []
 
 
-def _dispatch(name: str, args: dict, case_id: str, statement_id: int) -> dict:
+def _dispatch(name: str, args: dict, case_id: str, statement_id: int, owner: str | None) -> dict:
     try:
         if name == "search_case_file":
             # case_id and statement_id come from the session, not the model.
@@ -137,7 +137,7 @@ def _dispatch(name: str, args: dict, case_id: str, statement_id: int) -> dict:
         if name == "web_search":
             return web_search(args["query"])
         if name == "generate_image":
-            return generate_image(args["description"])
+            return generate_image(args["description"], owner=owner)
     except KeyError as exc:
         return {"error": f"missing argument {exc} for {name}"}
     return {"error": f"unknown tool {name}"}
@@ -186,7 +186,8 @@ def verify_statement(claims: list[dict], statement: str, statement_id: int, case
     return verify_statement_full(claims, statement, statement_id, case_id, speaker)["results"]
 
 
-def verify_statement_full(claims: list[dict], statement: str, statement_id: int, case_id: str, speaker: str) -> dict:
+def verify_statement_full(claims: list[dict], statement: str, statement_id: int, case_id: str, speaker: str,
+                          *, owner: str | None = None) -> dict:
     """{results, records, tool_calls}. records are the model's PROPOSALS for new case records;
     the caller decides which to keep (see main.run_pipeline)."""
     if not claims:
@@ -223,7 +224,7 @@ def verify_statement_full(claims: list[dict], statement: str, statement_id: int,
             parts = []
             for call in calls:
                 args = dict(call.args or {})
-                output = _dispatch(call.name, args, case_id, statement_id)
+                output = _dispatch(call.name, args, case_id, statement_id, owner)
                 call_id = len(tool_calls) + 1
                 tool_calls.append({"id": call_id, "name": call.name, "args": args, "result": output})
                 parts.append(types.Part.from_function_response(
@@ -241,8 +242,8 @@ def verify_statement_full(claims: list[dict], statement: str, statement_id: int,
             final_text = gemini_client.generate(gemini_client.MODEL, contents, config(False)).text
             verdicts = _parse_verdicts(final_text)
             model_calls += 1
-    except (errors.APIError, gemini_client.GeminiNotConfigured, ValueError) as exc:
-        return {"results": [outcome("PENDING", f"Verification did not complete: {exc}", []) for _ in claims],
+    except (errors.APIError, gemini_client.GeminiNotConfigured, ValueError):
+        return {"results": [outcome("PENDING", "Verification did not complete.", []) for _ in claims],
                 "records": [], "tool_calls": tool_calls}
 
     if verdicts is None:

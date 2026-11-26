@@ -5,11 +5,13 @@ import tempfile
 import uuid
 from pathlib import Path
 
-from fastapi import FastAPI, Form, HTTPException, Response, UploadFile
+from fastapi import FastAPI, Form, HTTPException, Request, Response, UploadFile
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from google.genai import errors
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from concurrent.futures import ThreadPoolExecutor
 
@@ -20,41 +22,75 @@ import followups
 import gemini_client
 import report
 import report_docx
+import security
 import stt
 import timeline
 import verification
 from tools.image_gen import OUTPUT_DIR, generate_image
-from tools.image_extract import ExtractionError, MAX_IMAGE_BYTES, extract_image
+from tools.image_extract import ExtractionError, MAX_IMAGE_BYTES, SIGNATURES, extract_image
 from tools.event_check import verify_event
 
-app = FastAPI(title="VERITAS-Lite")
+app = FastAPI(title="VERITAS-Lite", openapi_url=None if security.PRODUCTION else "/openapi.json",
+              redirect_slashes=False)
+origins = security.allowed_origins()
+app.add_middleware(security.RequestSecurity, origins=origins)
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["GET", "HEAD", "POST", "PATCH"],
+    allow_headers=["Content-Type"],
+    expose_headers=["Retry-After"],
 )
-OUTPUT_DIR.mkdir(exist_ok=True)
+app.include_router(security.auth)
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 db.init_db()  # adds any new tables and columns to an existing veritas.db
-app.mount("/generated", StaticFiles(directory=OUTPUT_DIR), name="generated")
 STATIC_DIR = Path(__file__).parent / "static"
 UPLOAD_DIR = Path(os.getenv("VERITAS_UPLOADS", Path(__file__).parent / "uploads"))
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 IMAGE_TYPES = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "image/gif": ".gif"}
-MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error(request: Request, exc: RequestValidationError):
+    # FastAPI's default includes the rejected input, which can contain a password or evidence.
+    return JSONResponse({"detail": [{"loc": error["loc"], "msg": error["msg"]} for error in exc.errors()]},
+                        status_code=422)
+
+
+def _image_file(directory: Path, filename: str) -> FileResponse:
+    path = (directory / filename).resolve()
+    if path.parent != directory.resolve() or not path.is_file():
+        raise HTTPException(404, "File not found")
+    return FileResponse(path, headers={"Content-Security-Policy": "default-src 'none'; sandbox"})
+
+
+@app.get("/uploads/{filename}")
+@app.head("/uploads/{filename}", include_in_schema=False)
+def uploaded_image(filename: str, request: Request):
+    if not re.fullmatch(r"[0-9a-f]{32}\.(png|jpg|webp|gif)", filename) or not db.owns_upload(filename, request.state.account):
+        raise HTTPException(404, "File not found")
+    return _image_file(UPLOAD_DIR, filename)
+
+
+@app.get("/generated/{filename}")
+@app.head("/generated/{filename}", include_in_schema=False)
+def generated_image(filename: str, request: Request):
+    if not re.fullmatch(r"[0-9a-f]{32}\.(png|jpg|svg)", filename) or not db.owns_generated_image(filename, request.state.account):
+        raise HTTPException(404, "File not found")
+    return _image_file(OUTPUT_DIR, filename)
 
 
 class GenerateImageRequest(BaseModel):
-    description: str
+    description: str = Field(max_length=4000)
 
 
 @app.post("/tools/generate-image")
-def generate_image_endpoint(body: GenerateImageRequest):
+def generate_image_endpoint(body: GenerateImageRequest, request: Request):
     if not body.description.strip():
         raise HTTPException(422, "description must not be empty")
-    return generate_image(body.description)
+    return generate_image(body.description, owner=request.state.account)
 
 
 @app.post("/tools/extract-image")
@@ -82,7 +118,7 @@ class StartSession(BaseModel):
 
 
 class SubmitStatement(BaseModel):
-    text: str
+    text: str = Field(max_length=12000)
 
 
 class NewSubject(BaseModel):
@@ -117,9 +153,14 @@ def _speaker(session: dict) -> str:
     return "Unknown (not on the case file)"
 
 
-def _require_session(session_id: int) -> dict:
+def _require_case(case_id: str, request: Request) -> None:
+    if not db.owns_case(case_id, request.state.account):
+        raise HTTPException(404, f"case {case_id} not found")
+
+
+def _require_session(session_id: int, request: Request) -> dict:
     session = db.get_session_row(session_id)
-    if session is None:
+    if session is None or not db.owns_case(session["case_id"], request.state.account):
         raise HTTPException(404, f"session {session_id} not found")
     return session
 
@@ -132,8 +173,8 @@ def _alibi_check(claims: list[dict], text: str, statement_id: int, session: dict
         evidence = [record for record in db.get_case(session["case_id"])["evidence"]
                     if record["source"] != "upload"]
         return alibi_check.check(claims, text, speaker, session, prior, evidence), None
-    except (errors.APIError, gemini_client.GeminiNotConfigured, ValueError) as exc:
-        return [], f"Alibi check did not complete: {exc}"
+    except (errors.APIError, gemini_client.GeminiNotConfigured, ValueError):
+        return [], "Alibi check did not complete."
 
 
 def _keep_records(verified: dict, stored: list[dict], session: dict, statement_id: int) -> list[dict]:
@@ -162,7 +203,7 @@ def _keep_records(verified: dict, stored: list[dict], session: dict, statement_i
     return kept
 
 
-def run_pipeline(session: dict, text: str) -> dict:
+def run_pipeline(session: dict, text: str, owner: str) -> dict:
     """Extract claims; then, in parallel, verify them with the tool-calling loop and run the
     alibi check against everything already on the case; then suggest follow-ups."""
     if session["ended_at"]:
@@ -172,7 +213,7 @@ def run_pipeline(session: dict, text: str) -> dict:
     except gemini_client.GeminiNotConfigured as exc:
         raise HTTPException(503, str(exc))
     except (errors.APIError, ValueError) as exc:
-        raise HTTPException(502, f"claim extraction failed: {exc}")
+        raise HTTPException(502, "Claim extraction failed.") from exc
 
     speaker = _speaker(session)
     statement = db.add_statement(session["id"], text)
@@ -181,7 +222,8 @@ def run_pipeline(session: dict, text: str) -> dict:
         for claim in claims
     ]
     with ThreadPoolExecutor(max_workers=2) as pool:
-        verifying = pool.submit(verification.verify_statement_full, claims, text, statement["id"], session["case_id"], speaker)
+        verifying = pool.submit(verification.verify_statement_full, claims, text, statement["id"], session["case_id"],
+                                speaker, owner=owner)
         checking = pool.submit(_alibi_check, stored, text, statement["id"], session, speaker)
         verified = verifying.result()
         found, alibi_error = checking.result()
@@ -201,16 +243,15 @@ def run_pipeline(session: dict, text: str) -> dict:
     try:
         followup_list = followups.suggest(results, findings, speaker)
         db.set_followups(statement["id"], followup_list)
-    except (errors.APIError, gemini_client.GeminiNotConfigured, ValueError) as exc:
-        followup_error = f"Follow-up questions could not be generated: {exc}"
+    except (errors.APIError, gemini_client.GeminiNotConfigured, ValueError):
+        followup_error = "Follow-up questions could not be generated."
     return {**statement, "claims": results, "alibi_findings": findings, "followups": followup_list,
             "new_records": new_records, "alibi_error": alibi_error, "followup_error": followup_error}
 
 
 @app.post("/sessions/start")
-def start_session(body: StartSession):
-    if db.get_case(body.case_id) is None:
-        raise HTTPException(404, f"case {body.case_id} not found")
+def start_session(body: StartSession, request: Request):
+    _require_case(body.case_id, request)
     if body.subject_id is not None:
         subject = db.get_subject(body.subject_id)
         if subject is None or subject["case_id"] != body.case_id:
@@ -222,17 +263,20 @@ def start_session(body: StartSession):
 
 
 @app.post("/sessions/{session_id}/attachments")
-def add_attachment(session_id: int, image: UploadFile, caption: str | None = Form(None)):
+def add_attachment(session_id: int, image: UploadFile, request: Request, caption: str | None = Form(None, max_length=1000)):
     """Save the image on the interview and file it as case evidence."""
-    session = _require_session(session_id)
+    session = _require_session(session_id, request)
     if session["ended_at"]:
         raise HTTPException(409, "this interview has ended")
-    suffix = IMAGE_TYPES.get(image.content_type or "")
+    content_type = image.content_type or ""
+    suffix = IMAGE_TYPES.get(content_type)
     if suffix is None:
         raise HTTPException(415, "only PNG, JPEG, WebP or GIF images can be added")
-    data = image.file.read(MAX_UPLOAD_BYTES + 1)
-    if len(data) > MAX_UPLOAD_BYTES:
+    data = image.file.read(MAX_IMAGE_BYTES + 1)
+    if len(data) > MAX_IMAGE_BYTES:
         raise HTTPException(413, "images must be 10 MB or smaller")
+    if not SIGNATURES[content_type](data):
+        raise HTTPException(415, "image does not match its declared file type")
     filename = f"{uuid.uuid4().hex}{suffix}"
     path = UPLOAD_DIR / filename
     caption = (caption or "").strip() or None
@@ -245,7 +289,8 @@ def add_attachment(session_id: int, image: UploadFile, caption: str | None = For
 
 
 @app.post("/sessions/{session_id}/attachments/{attachment_id}/extract")
-def extract_attachment(session_id: int, attachment_id: int):
+def extract_attachment(session_id: int, attachment_id: int, request: Request):
+    _require_session(session_id, request)
     attachment = db.get_attachment(session_id, attachment_id)
     if attachment is None:
         raise HTTPException(404, "image attachment not found in this interview")
@@ -265,14 +310,13 @@ def extract_attachment(session_id: int, attachment_id: int):
 
 
 @app.get("/cases")
-def list_cases():
-    return db.list_cases()
+def list_cases(request: Request):
+    return db.list_cases(request.state.account)
 
 
 @app.post("/cases/{case_id}/subjects")
-def add_subject(case_id: str, body: NewSubject):
-    if db.get_case(case_id) is None:
-        raise HTTPException(404, f"case {case_id} not found")
+def add_subject(case_id: str, body: NewSubject, request: Request):
+    _require_case(case_id, request)
     if not body.full_name.strip():
         raise HTTPException(422, "name is empty")
     if body.role not in db.VALID_ROLES:
@@ -282,8 +326,9 @@ def add_subject(case_id: str, body: NewSubject):
 
 
 @app.patch("/subjects/{subject_id}")
-def update_subject(subject_id: int, body: SubjectChanges):
-    if db.get_subject(subject_id) is None:
+def update_subject(subject_id: int, body: SubjectChanges, request: Request):
+    subject = db.get_subject(subject_id)
+    if subject is None or not db.owns_case(subject["case_id"], request.state.account):
         raise HTTPException(404, f"person {subject_id} not found")
     if body.role is not None and body.role not in db.VALID_ROLES:
         raise HTTPException(422, f"role must be one of {sorted(db.VALID_ROLES)}")
@@ -291,113 +336,114 @@ def update_subject(subject_id: int, body: SubjectChanges):
 
 
 def _transcribe_upload(audio: UploadFile) -> str:
-    suffix = Path(audio.filename or "").suffix or ".webm"
+    data = audio.file.read(security.MAX_AUDIO_BYTES + 1)
+    if len(data) > security.MAX_AUDIO_BYTES:
+        raise HTTPException(413, "audio must be 20 MB or smaller")
+    suffix = Path(audio.filename or "").suffix.lower()
+    if suffix not in {".wav", ".webm", ".mp3", ".m4a", ".mp4", ".ogg", ".flac"}:
+        suffix = ".webm"
     handle, path = tempfile.mkstemp(suffix=suffix)
     try:
         with os.fdopen(handle, "wb") as out:
-            out.write(audio.file.read())
+            out.write(data)
         try:
             return stt.transcribe(path)
         except Exception as exc:  # faster-whisper/PyAV raise several types on an undecodable file
-            raise HTTPException(400, f"could not transcribe audio: {exc}")
+            raise HTTPException(400, "could not transcribe audio") from exc
     finally:
         os.unlink(path)
 
 
 @app.post("/sessions/{session_id}/transcribe")
-def transcribe_only(session_id: int, audio: UploadFile):
+def transcribe_only(session_id: int, audio: UploadFile, request: Request):
     """Speech-to-text only: nothing is stored and nothing goes to Gemini. The investigator
     reviews the text, then sends it to /statements."""
-    session = _require_session(session_id)
+    session = _require_session(session_id, request)
     if session["ended_at"]:
         raise HTTPException(409, "this interview has ended")
     return {"transcript": _transcribe_upload(audio)}
 
 
 @app.post("/sessions/{session_id}/statements")
-def submit_statement(session_id: int, body: SubmitStatement):
-    session = _require_session(session_id)
+def submit_statement(session_id: int, body: SubmitStatement, request: Request):
+    session = _require_session(session_id, request)
     text = body.text.strip()
     if not text:
         raise HTTPException(422, "statement text is empty")
-    return run_pipeline(session, text)
+    return run_pipeline(session, text, request.state.account)
 
 
 @app.post("/sessions/{session_id}/audio")
-def submit_audio(session_id: int, audio: UploadFile):
-    session = _require_session(session_id)
+def submit_audio(session_id: int, audio: UploadFile, request: Request):
+    session = _require_session(session_id, request)
+    if session["ended_at"]:
+        raise HTTPException(409, "this interview has ended")
     transcript = _transcribe_upload(audio)
 
     if not transcript:
         return {"transcript": "", "claims": []}
     try:
-        return {"transcript": transcript, **run_pipeline(session, transcript)}
+        return {"transcript": transcript, **run_pipeline(session, transcript, request.state.account)}
     except HTTPException as exc:
         raise HTTPException(exc.status_code, f"{exc.detail} (transcript: {transcript})")
 
 
 @app.get("/cases/{case_id}")
-def get_case(case_id: str):
-    case = db.get_case(case_id)
-    if case is None:
-        raise HTTPException(404, f"case {case_id} not found")
-    return case
+def get_case(case_id: str, request: Request):
+    _require_case(case_id, request)
+    return db.get_case(case_id)
 
 
 @app.get("/sessions/{session_id}")
-def get_session(session_id: int):
-    history = db.get_session_history(session_id)
-    if history is None:
-        raise HTTPException(404, f"session {session_id} not found")
-    return history
+def get_session(session_id: int, request: Request):
+    _require_session(session_id, request)
+    return db.get_session_history(session_id)
 
 
 @app.get("/cases/{case_id}/timeline")
-def get_timeline(case_id: str):
-    result = timeline.build(case_id)
-    if result is None:
-        raise HTTPException(404, f"case {case_id} not found")
-    return result
+def get_timeline(case_id: str, request: Request):
+    _require_case(case_id, request)
+    return timeline.build(case_id)
 
 
 @app.get("/cases/{case_id}/findings")
-def get_case_findings(case_id: str):
-    if db.get_case(case_id) is None:
-        raise HTTPException(404, f"case {case_id} not found")
+def get_case_findings(case_id: str, request: Request):
+    _require_case(case_id, request)
     return db.get_findings(case_id=case_id)
 
 
 @app.post("/sessions/{session_id}/end")
-def end_session(session_id: int):
-    _require_session(session_id)
+def end_session(session_id: int, request: Request):
+    _require_session(session_id, request)
     db.end_session(session_id)
     return db.get_session_row(session_id)
 
 
 @app.post("/sessions/{session_id}/report")
-def generate_report(session_id: int):
-    session = _require_session(session_id)
+def generate_report(session_id: int, request: Request):
+    session = _require_session(session_id, request)
     if not session["ended_at"]:
         raise HTTPException(409, "end the interview before generating its report")
     return report.generate(session_id)
 
 
 @app.get("/sessions/{session_id}/report")
-def get_report(session_id: int):
-    session = _require_session(session_id)
+def get_report(session_id: int, request: Request):
+    session = _require_session(session_id, request)
     if session["report"] is None:
         raise HTTPException(404, "no report yet for this session")
     return session["report"]
 
 
 @app.get("/sessions/{session_id}/report.docx")
-def get_report_docx(session_id: int):
+def get_report_docx(session_id: int, request: Request):
     """Built in memory from the stored report and streamed; never written to disk here."""
-    session = _require_session(session_id)
+    session = _require_session(session_id, request)
     if session["report"] is None:
         raise HTTPException(404, "generate the report first")
     data = report_docx.build(session["report"])
-    name = f"veritas-report-{session['case_id']}-session{session_id}.docx"
+    safe_case_id = re.sub(r"[^A-Za-z0-9_-]", "_", session["case_id"])[:64]
+    name = f"veritas-report-{safe_case_id}-session{session_id}.docx"
     return Response(
         content=data,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",

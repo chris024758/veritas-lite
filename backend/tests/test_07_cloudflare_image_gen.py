@@ -96,11 +96,14 @@ class TestSlice4ApiEndpoint(unittest.TestCase):
         """POST /tools/generate-image must return 200 with an image_url key."""
 
         from fastapi.testclient import TestClient
+        from auth_test_helpers import seed_demo, sign_in
         # The report exporter is unrelated to this endpoint.
         with patch.dict(sys.modules, {"report_docx": unittest.mock.MagicMock()}):
             from main import app
 
         client = TestClient(app)
+        seed_demo()
+        sign_in(client)
 
         with patch.dict(os.environ, _CREDENTIALS), patch("tools.image_gen.requests.post") as post:
             post.return_value.json.return_value = {
