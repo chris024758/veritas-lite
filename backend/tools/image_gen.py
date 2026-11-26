@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import base64
+import logging
 import os
+import re
 import uuid
 from html import escape
 from pathlib import Path
@@ -21,6 +23,18 @@ OUTPUT_DIR = Path(os.getenv("VERITAS_GENERATED", Path(__file__).parent.parent / 
 # ---------------------------------------------------------------------------
 _MODEL = "@cf/black-forest-labs/flux-1-schnell"
 _TIMEOUT = 120
+
+
+def discard_generated_file(image_url: str) -> None:
+    """Remove a preview created by this provider."""
+    match = re.fullmatch(r"/generated/([0-9a-f]{32}\.(?:jpg|svg))", image_url)
+    if match:
+        with db.connect() as conn:
+            conn.execute("DELETE FROM generated_images WHERE filename = ?", (match[1],))
+        try:
+            (OUTPUT_DIR / match[1]).unlink(missing_ok=True)
+        except OSError:
+            logging.getLogger(__name__).warning("Could not remove illustration preview %s", match[1])
 
 
 # ---------------------------------------------------------------------------

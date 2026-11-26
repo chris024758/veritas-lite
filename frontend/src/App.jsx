@@ -8,12 +8,11 @@ import CaseFile from "./CaseFile.jsx";
 import CaseFilePanel from "./CaseFilePanel.jsx";
 import FlagPopover, { FindingBody } from "./FlagPopover.jsx";
 import IntervieweePanel from "./IntervieweePanel.jsx";
-import ImageGenPanel from "./ImageGenPanel.jsx";
 import ReportPanel from "./ReportView.jsx";
 import SidePanel from "./SidePanel.jsx";
 import VeritasLoader from "./VeritasLoader.jsx";
 import VoiceStage from "./VoiceStage.jsx";
-import { casePath, navigate, useRoute } from "./router.js";
+import { casePath, navigate, parseRoute, useRoute } from "./router.js";
 
 const Timeline3D = lazy(() => import("./Timeline3D.jsx"));
 const STAGES = ["Extracting claims", "Verifying", "Alibi check", "Follow-ups"];
@@ -77,7 +76,6 @@ function Workspace({ onSignOut }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [confirm, setConfirm] = useState(null);
   const [reportOpen, setReportOpen] = useState(false);
-  const [imageGenOpen, setImageGenOpen] = useState(false);
   const [reportBusy, setReportBusy] = useState(false);
   const [reportError, setReportError] = useState(null);
   const [snapshot, setSnapshot] = useState(null);
@@ -222,6 +220,26 @@ function Workspace({ onSignOut }) {
     }
   }
 
+  function illustrationChanged(record, target) {
+    setInterview((iv) => {
+      if (iv?.sessionId !== record.session_id) return iv;
+      return {
+        ...iv,
+        statements: iv.statements.map((statement) => {
+          if (statement.id !== record.statement_id) return statement;
+          if (target === "claims") {
+            return { ...statement, claims: statement.claims.map((claim) =>
+              claim.id === record.id ? { ...claim, illustration: record } : claim) };
+          }
+          return { ...statement, new_records: statement.new_records.map((item) => item.id === record.id ? record : item) };
+        }),
+      };
+    });
+    if (target === "evidence" && record.image && parseRoute(window.location.hash).caseId === record.case_id) {
+      refreshCase(record.case_id);
+    }
+  }
+
   const onSnapshot = useCallback((shot) => setSnapshot(shot), []);
 
   async function signOut() {
@@ -257,7 +275,6 @@ function Workspace({ onSignOut }) {
           </nav>
         )}
         <div className="topbar-right">
-          <button type="button" className="secondary" onClick={() => setImageGenOpen(true)}>Image generator</button>
           <button type="button" className="secondary" onClick={signOut}>Sign out</button>
           {signOutError && <span className="error" role="alert">{signOutError}</span>}
           {active && (
@@ -276,13 +293,6 @@ function Workspace({ onSignOut }) {
       </header>
 
       {route.name === "cases" && <CaseDirectory />}
-
-      {imageGenOpen && (
-        <Dialog title="Image generator" onCancel={() => setImageGenOpen(false)}>
-          <ImageGenPanel />
-          <div className="actions"><button type="button" className="secondary" onClick={() => setImageGenOpen(false)}>Close</button></div>
-        </Dialog>
-      )}
 
       {caseId && route.view === "file" && (
         <CaseFile caseData={caseData} error={caseError} findings={findings}
@@ -341,7 +351,7 @@ function Workspace({ onSignOut }) {
 
             {active ? (
               <SidePanel statements={active.statements} attachments={active.attachments} sessionId={active.sessionId} freshFindingIds={freshFindingIds}
-                onPickQuestion={setAsking} onJump={jumpTo} />
+                onPickQuestion={setAsking} onJump={jumpTo} onIllustrationChanged={illustrationChanged} />
             ) : (
               <aside className="side glass" aria-label="Findings">
                 <h2 className="side-title">Findings</h2>

@@ -1,7 +1,7 @@
 """The final demo, end to end over real HTTP. Needs a FRESH run_fake_stack.py (demo seed, no
 interviews). Gemini and Cloudflare responses are scripted.
 
-1. Street cleaner (added live): a black SUV -> new case record with a generated image.
+1. Street cleaner (added live): a black SUV -> new case record with an illustration suggestion.
 2. Suresh: the maps flag only, no clash with anything seeded.
 3. Ramesh: "Suresh didn't come over" -> WITNESS clash; the ticket is filed as evidence
    without comparing it to statements.
@@ -71,7 +71,7 @@ check("duplicate name returns the existing person",
 check("bad role 422", post(f"/cases/{CASE}/subjects", json={"full_name": "X", "role": "Boss"}).status_code == 422)
 check("start with nobody 422", post("/sessions/start", json={"case_id": CASE}).status_code == 422)
 
-# 1. Street cleaner: the SUV becomes a case record with a generated picture
+# 1. Street cleaner: the SUV becomes a case record with an illustration suggestion.
 s1 = post("/sessions/start", json={"case_id": CASE, "subject_id": cleaner["id"]}).json()["session_id"]
 body = post(f"/sessions/{s1}/statements", json={"text": CLEANER}).json()
 records = body["new_records"]
@@ -80,9 +80,16 @@ suv = records[0]
 check("the record is a vehicle sighting from his statement", suv["evidence_type"] == "vehicle_sighting"
       and suv["source"] == "statement" and suv["subject_id"] == cleaner["id"] and suv["session_id"] == s1)
 check("the record carries time and place", suv["metadata"]["time"] == "22:15" and "back lane" in suv["metadata"]["location"])
-check("the record has a generated image, marked as generated", suv["image"].startswith("/generated/") and suv["image_kind"] == "generated")
-check("the generated image is served", client.get(API + suv["image"]).content.startswith(b"\xff\xd8\xff"))
+check("the record has a suggested prompt and awaits generation", suv["illustration_prompt"] and suv["image"] is None)
+illustration = f"/sessions/{s1}/evidence/{suv['id']}/illustration"
+draft = post(illustration)
+preview = draft.json()["illustration_preview"]
+check("generating a preview leaves the case image empty", draft.status_code == 200 and draft.json()["image"] is None)
+check("the authenticated investigator can load the preview", client.get(API + preview).content.startswith(b"\xff\xd8\xff"))
+approved = post(f"{illustration}/review", json={"preview": preview, "approve": True})
+check("approval saves the illustration", approved.status_code == 200 and approved.json()["image"] == preview)
 on_file = next(e for e in case_file()["evidence"] if e["id"] == suv["id"])
+check("the case file displays only the approved illustration", on_file["image"] == preview and on_file["image_kind"] == "generated")
 check("the case file shows who provided it", on_file["provided_by"] == "Ganesh Pawar")
 check("no clashes for the cleaner", body["alibi_findings"] == [])
 post(f"/sessions/{s1}/end")

@@ -152,7 +152,7 @@ class RequestSecurity:
                 await reject(404, "File not found")
                 return
             if method == "POST" and (path.startswith("/tools/") or path.endswith(
-                    ("/statements", "/audio", "/transcribe", "/extract", "/report"))):
+                    ("/statements", "/audio", "/transcribe", "/extract", "/report", "/illustration"))):
                 retry = await run_in_threadpool(_rate_limit, "tools", account, TOOL_LIMIT)
                 if retry is not None:
                     await reject(429, "Too many requests", {"Retry-After": str(retry)})

@@ -195,8 +195,6 @@ def _plan(claim_type: str, claim_text: str, entities: dict, case_id: str, speake
     if claim_type == "VEHICLE":
         if not results:
             return {"call": search(entities.get("vehicle", ""))}
-        if len(results) == 1:
-            return {"call": ("generate_image", {"description": entities.get("vehicle", claim_text)})}
         where = (entities.get("location") or "").lower()
         for item in results[0].get("evidence", []):
             seen_at = (item["metadata"].get("location") or "").lower()
@@ -220,7 +218,7 @@ def _plan(claim_type: str, claim_text: str, entities: dict, case_id: str, speake
 
 def _verification(body: dict) -> JSONResponse:
     declared = {d["name"] for t in body["tools"] for d in t.get("functionDeclarations", [])}
-    if declared != {"search_case_file", "check_route", "web_search", "generate_image"}:
+    if declared != {"search_case_file", "check_route", "web_search"}:
         return _error(400, "INVALID_ARGUMENT", f"wrong tool set: {declared}")
     for declaration in (d for t in body["tools"] for d in t["functionDeclarations"]):
         if not declaration.get("parameters"):
@@ -288,11 +286,15 @@ def _verification(body: dict) -> JSONResponse:
     records = []
     if "(Witness)" in speaker:
         for number, (claim_type, text, entities) in claims.items():
-            if claim_type == "VEHICLE" and len(cited[number]) >= 2:
+            if claim_type == "VEHICLE":
                 records.append({"claim": number, "record_type": "vehicle_sighting", "description": text,
                                 "metadata": {"time": entities.get("time_start"), "location": entities.get("location"),
-                                             "vehicle_descriptor": entities.get("vehicle")},
-                                "image_call": cited[number][1]})
+                                             "vehicle_descriptor": entities.get("vehicle")}})
+    illustrations = [
+        {"claim": number, "prompt": entities.get("vehicle") or text}
+        for number, (claim_type, text, entities) in claims.items()
+        if claim_type == "VEHICLE"
+    ][:2]
     verdicts = []
     for number, s in steps.items():
         if number in prose:
@@ -300,7 +302,7 @@ def _verification(body: dict) -> JSONResponse:
         else:
             status, reason = s.get("verdict", ("PENDING", "Ran out of tool rounds."))
         verdicts.append({"claim": number, "status": status, "reason": reason, "evidence_calls": cited[number]})
-    return _ok([{"text": json.dumps({"verdicts": verdicts, "records": records})}])
+    return _ok([{"text": json.dumps({"verdicts": verdicts, "records": records, "illustrations": illustrations})}])
 
 
 def _json_request(body: dict) -> bool:

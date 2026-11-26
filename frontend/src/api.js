@@ -34,7 +34,11 @@ export const checkSession = () => request("/auth/session");
 export const login = (username, password) => postJson("/auth/login", { username, password });
 export const logout = () => request("/auth/logout", { method: "POST" });
 
-export const generateImage = (description) => postJson("/tools/generate-image", { description });
+export const generateIllustration = (sessionId, target, id) =>
+  request(`/sessions/${sessionId}/${target}/${id}/illustration`, { method: "POST" });
+
+export const reviewIllustration = (sessionId, target, id, preview, approve) =>
+  postJson(`/sessions/${sessionId}/${target}/${id}/illustration/review`, { preview, approve });
 
 export const listCases = () => request("/cases");
 

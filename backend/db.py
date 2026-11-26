@@ -80,6 +80,13 @@ CREATE TABLE IF NOT EXISTS claims (
     reason TEXT,
     details_json TEXT NOT NULL DEFAULT '{}'
 );
+-- Claim illustrations stay separate from the claim's verification details.
+CREATE TABLE IF NOT EXISTS claim_illustrations (
+    claim_id INTEGER PRIMARY KEY REFERENCES claims(id) ON DELETE CASCADE,
+    illustration_prompt TEXT NOT NULL,
+    illustration_preview TEXT,
+    image TEXT
+);
 -- Case records. Seeded ones, ones proposed from a witness's statement, and uploaded proof.
 -- A case can hold several records of one type (two sightings, two tickets).
 CREATE TABLE IF NOT EXISTS evidence (
@@ -94,7 +101,9 @@ CREATE TABLE IF NOT EXISTS evidence (
     session_id INTEGER REFERENCES sessions(id),
     statement_id INTEGER REFERENCES statements(id),
     subject_id INTEGER REFERENCES subjects(id),
-    created_at TEXT
+    created_at TEXT,
+    illustration_prompt TEXT,
+    illustration_preview TEXT
 );
 -- Alibi-check findings: a new claim clashing with an earlier claim (SELF or WITNESS) or with a
 -- case-file record (EVIDENCE). Exactly one of other_claim_id / evidence_id is set.
@@ -176,13 +185,15 @@ MIGRATIONS = [
     ("evidence", "statement_id", "INTEGER REFERENCES statements(id)"),
     ("evidence", "subject_id", "INTEGER REFERENCES subjects(id)"),
     ("evidence", "created_at", "TEXT"),
+    ("evidence", "illustration_prompt", "TEXT"),
+    ("evidence", "illustration_preview", "TEXT"),
     ("cases", "incident_date", "TEXT"),
     ("attachments", "evidence_id", "INTEGER REFERENCES evidence(id)"),
     ("attachments", "extraction_json", "TEXT"),
 ]
 
 EVIDENCE_COLUMNS = ("id, case_id, evidence_type, description, metadata_json, image, image_kind, "
-                    "source, session_id, statement_id, subject_id, created_at")
+                    "source, session_id, statement_id, subject_id, created_at, illustration_prompt, illustration_preview")
 
 
 def _drop_evidence_unique() -> None:
@@ -408,7 +419,21 @@ def get_claims(statement_id: int) -> list[dict]:
         rows = conn.execute(
             "SELECT * FROM claims WHERE statement_id = ? ORDER BY id", (statement_id,)
         ).fetchall()
-    return [_claim_row(r) for r in rows]
+        illustrations = {
+            row["id"]: dict(row)
+            for row in conn.execute(
+                """SELECT c.id, c.statement_id, s.session_id, i.illustration_prompt, i.illustration_preview, i.image
+                   FROM claim_illustrations i JOIN claims c ON c.id = i.claim_id
+                   JOIN statements s ON s.id = c.statement_id WHERE c.statement_id = ?""",
+                (statement_id,),
+            )
+        }
+    return [{**_claim_row(row), "illustration": illustrations.get(row["id"])} for row in rows]
+
+
+def save_claim_illustration(claim_id: int, prompt: str) -> None:
+    with connect() as conn:
+        conn.execute("INSERT INTO claim_illustrations (claim_id, illustration_prompt) VALUES (?, ?)", (claim_id, prompt))
 
 
 def _statement_row(row: sqlite3.Row) -> dict:
@@ -468,18 +493,23 @@ def owns_generated_image(filename: str, username: str) -> bool:
         registered = conn.execute("SELECT username FROM generated_images WHERE filename = ?", (filename,)).fetchone()
         if registered is not None:
             return registered["username"] == username
-        # Older case files and claim verdicts already recorded their generated image URLs.
+        # Before the image registry, case records and claim illustrations held the URLs.
         url = f"/generated/{filename}"
         return conn.execute(
             """SELECT 1 FROM cases c JOIN evidence e ON c.id = e.case_id
-               WHERE c.owner = ? AND e.image_kind = 'generated' AND e.image = ?
+               WHERE c.owner = ? AND (e.illustration_preview = ? OR (e.image_kind = 'generated' AND e.image = ?))
+               UNION ALL
+               SELECT 1 FROM cases c JOIN sessions s ON s.case_id = c.id
+               JOIN statements st ON st.session_id = s.id JOIN claims cl ON cl.statement_id = st.id
+               JOIN claim_illustrations i ON i.claim_id = cl.id
+               WHERE c.owner = ? AND ? IN (i.image, i.illustration_preview)
                UNION ALL
                SELECT 1 FROM cases c JOIN sessions s ON s.case_id = c.id
                JOIN statements st ON st.session_id = s.id JOIN claims cl ON cl.statement_id = st.id,
                json_each(cl.details_json, '$.tool_calls') AS call
                WHERE c.owner = ? AND json_extract(call.value, '$.name') = 'generate_image'
                AND json_extract(call.value, '$.result.image_url') = ? LIMIT 1""",
-            (username, url, username, url),
+            (username, url, url, username, url, username, url),
         ).fetchone() is not None
 
 
@@ -499,20 +529,65 @@ def save_attachment_extraction(session_id: int, attachment_id: int, result: dict
 def add_evidence(case_id: str, evidence_type: str, description: str, metadata: dict, *,
                  source: str, image: str | None = None, image_kind: str | None = None,
                  session_id: int | None = None, statement_id: int | None = None,
-                 subject_id: int | None = None, connection: sqlite3.Connection | None = None) -> dict:
+                 subject_id: int | None = None, connection: sqlite3.Connection | None = None,
+                 illustration_prompt: str | None = None) -> dict:
     """A record from a witness's statement or an uploaded image."""
     with (connect() if connection is None else nullcontext(connection)) as conn:
         cur = conn.execute(
             """INSERT INTO evidence (case_id, evidence_type, description, metadata_json, image, image_kind,
-                   source, session_id, statement_id, subject_id, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   source, session_id, statement_id, subject_id, created_at, illustration_prompt)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (case_id, evidence_type, description, json.dumps(metadata), image, image_kind, source,
-             session_id, statement_id, subject_id, datetime.now(timezone.utc).isoformat()),
+             session_id, statement_id, subject_id, datetime.now(timezone.utc).isoformat(), illustration_prompt),
         )
         row = conn.execute("SELECT * FROM evidence WHERE id = ?", (cur.lastrowid,)).fetchone()
+    return _evidence_row(row)
+
+
+def _evidence_row(row: sqlite3.Row) -> dict:
     record = dict(row)
     record["metadata"] = json.loads(record.pop("metadata_json"))
     return record
+
+
+def get_illustration_record(session_id: int, item_id: int, target: str) -> dict | None:
+    with connect() as conn:
+        if target == "claims":
+            row = conn.execute(
+                """SELECT c.id, c.statement_id, s.session_id, i.illustration_prompt, i.illustration_preview, i.image
+                   FROM claim_illustrations i JOIN claims c ON c.id = i.claim_id
+                   JOIN statements s ON s.id = c.statement_id WHERE s.session_id = ? AND c.id = ?""",
+                (session_id, item_id),
+            ).fetchone()
+            return dict(row) if row else None
+        row = conn.execute(
+            "SELECT * FROM evidence WHERE id = ? AND session_id = ? AND source = 'statement'",
+            (item_id, session_id),
+        ).fetchone()
+    return _evidence_row(row) if row else None
+
+
+def save_illustration_preview(item_id: int, preview: str, target: str) -> bool:
+    table, key = ("claim_illustrations", "claim_id") if target == "claims" else ("evidence", "id")
+    with connect() as conn:
+        return conn.execute(
+            f"UPDATE {table} SET illustration_preview = ? WHERE {key} = ? AND image IS NULL AND illustration_preview IS NULL",
+            (preview, item_id),
+        ).rowcount == 1
+
+
+def review_illustration(item_id: int, preview: str, approve: bool, target: str) -> bool:
+    table, key = ("claim_illustrations", "claim_id") if target == "claims" else ("evidence", "id")
+    values = "illustration_preview = NULL"
+    if approve:
+        values += ", image = illustration_preview"
+        if target == "evidence":
+            values += ", image_kind = 'generated'"
+    with connect() as conn:
+        return conn.execute(
+            f"UPDATE {table} SET {values} WHERE {key} = ? AND image IS NULL AND illustration_preview = ?",
+            (item_id, preview),
+        ).rowcount == 1
 
 
 def get_claim_context(claim_id: int) -> dict | None:

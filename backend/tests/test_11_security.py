@@ -79,8 +79,22 @@ class SecurityTests(unittest.TestCase):
         bad = self.client.post(attachments, files={"image": ("bad.png", b"<html>", "image/png")})
         self.assertEqual(bad.status_code, 415)
         attachment = self.client.post(attachments, files={"image": ("image.png", PNG_HEADER, "image/png")}).json()
-        with patch.dict("os.environ", {"CLOUDFLARE_ACCOUNT_ID": "", "CLOUDFLARE_API_TOKEN": ""}):
-            generated = self.client.post("/tools/generate-image", json={"description": "Test image"}).json()["image_url"]
+        session_id = started.json()["session_id"]
+        statement = db.add_statement(session_id, "A white scooter.")
+        claim_id = db.add_claim(statement["id"], "VEHICLE", statement["text"], {})
+        db.save_claim_illustration(claim_id, "A white scooter")
+        illustration = f"{session}/claims/{claim_id}/illustration"
+        with (
+            patch.dict("os.environ", {"CLOUDFLARE_ACCOUNT_ID": "account", "CLOUDFLARE_API_TOKEN": "token"}),
+            patch.object(image_gen, "_cloudflare_generate", return_value=b"\xff\xd8\xffimage") as generate,
+        ):
+            with TestClient(main.app) as guest:
+                self.assertEqual(guest.post(illustration).status_code, 401)
+            draft = self.client.post(illustration)
+            self.assertEqual(draft.status_code, 200)
+            generated = draft.json()["illustration_preview"]
+            generate.assert_called_once()
+        approval = {"preview": generated, "approve": True}
         for path in (attachment["url"], generated):
             self.assertEqual(self.client.get(path).status_code, 200)
             self.assertEqual(self.client.head(path).status_code, 200)
@@ -98,6 +112,19 @@ class SecurityTests(unittest.TestCase):
             self.assertEqual(other.post(f"{session}/end").status_code, 404)
             extract = f"{attachments}/{attachment['id']}/extract"
             self.assertEqual(other.post(extract).status_code, 404)
+            self.assertEqual(other.post(illustration).status_code, 404)
+            self.assertEqual(other.post(f"{illustration}/review", json=approval).status_code, 404)
+            private_session = db.create_session("PRIVATE", "Investigator")["id"]
+            self.assertEqual(other.post(f"/sessions/{private_session}/claims/{claim_id}/illustration").status_code, 404)
+        accepted = self.client.post(f"{illustration}/review", json=approval)
+        self.assertEqual(accepted.json()["image"], generated)
+        # An approved illustration recorded before the image registry remains private and readable.
+        with db.connect() as conn:
+            conn.execute("DELETE FROM generated_images WHERE filename = ?", (Path(generated).name,))
+        self.assertEqual(self.client.get(generated).status_code, 200)
+        with TestClient(main.app) as other:
+            sign_in(other, username="investigator")
+            self.assertEqual(other.get(generated).status_code, 404)
 
     def test_cors_and_cross_origin_writes(self):
         cors = {"Origin": "http://localhost:5173", "Access-Control-Request-Method": "POST",
@@ -142,12 +169,12 @@ class SecurityTests(unittest.TestCase):
             self.assertEqual(self.client.get("/cases").status_code, 200)
             self.assertEqual(self.client.get("/cases", headers={"X-Forwarded-For": "192.0.2.1"}).status_code, 429)
         body = b"x" * (security.MAX_JSON_BYTES + 1)
-        self.assertEqual(self.client.post("/tools/generate-image", content=body).status_code, 413)
-        chunks = iter((b'{"description":"', body, b'"}'))
-        streamed = self.client.post("/tools/generate-image", content=chunks, headers={"Content-Type": "application/json"})
+        self.assertEqual(self.client.post("/sessions/1/statements", content=body).status_code, 413)
+        chunks = iter((b'{"text":"', body, b'"}'))
+        streamed = self.client.post("/sessions/1/statements", content=chunks, headers={"Content-Type": "application/json"})
         self.assertEqual(streamed.status_code, 413)
         with patch.object(security, "TOOL_LIMIT", 2):
-            limited = self.client.post("/tools/generate-image", json={"description": "Test"})
+            limited = self.client.post("/sessions/1/claims/1/illustration")
             self.assertEqual(limited.status_code, 429)
 
     def test_seed_migrates_demo_fixtures_without_claiming_private_data(self):

@@ -4,6 +4,7 @@ import ClaimRows, { Tally } from "./ClaimsTable.jsx";
 import FollowUps from "./FollowUps.jsx";
 import MapsPanel from "./MapsPanel.jsx";
 import ImageExtraction from "./ImageExtraction.jsx";
+import ImageGenPanel from "./ImageGenPanel.jsx";
 import { assetUrl } from "./api.js";
 import { turnLabel } from "./findings.js";
 
@@ -42,7 +43,30 @@ function AddedRecords({ statements, attachments }) {
   );
 }
 
-export default function SidePanel({ statements, attachments = [], sessionId, freshFindingIds, onPickQuestion, onJump }) {
+function Illustrations({ statements, onChange }) {
+  const cards = [...statements].reverse().flatMap((statement) => [
+    ...statement.claims.filter((claim) => claim.illustration).map((claim) => ({
+      record: claim.illustration, text: claim.text, target: "claims", statement,
+    })),
+    ...(statement.new_records ?? []).filter((record) => record.illustration_prompt).map((record) => ({
+      record, text: record.description, target: "evidence", statement,
+    })),
+  ]);
+  if (cards.length === 0) return null;
+  return (
+    <section className="side-section" aria-label="Image suggestions">
+      <h3 className="eyebrow">Image suggestions</h3>
+      {cards.map(({ record, text, target, statement }) => (
+        <article key={`${target}-${record.id}`} className="maps-panel illustration-card">
+          <p className="small"><span className="muted">{turnLabel(statement.turn_index)} · </span>{text}</p>
+          <ImageGenPanel record={record} target={target} sourceText={statement.text} onChange={onChange} />
+        </article>
+      ))}
+    </section>
+  );
+}
+
+export default function SidePanel({ statements, attachments = [], sessionId, freshFindingIds, onPickQuestion, onJump, onIllustrationChanged }) {
   const [highlighted, setHighlighted] = useState([]);
   const latest = statements[statements.length - 1];
   const findings = statements.flatMap((s) => s.alibi_findings ?? []);
@@ -79,6 +103,7 @@ export default function SidePanel({ statements, attachments = [], sessionId, fre
         <Tally claims={claims} />
       </div>
       <AlibiBanner findings={latest?.alibi_findings ?? []} pulseKey={latest?.id} />
+      <Illustrations statements={statements} onChange={onIllustrationChanged} />
       <FollowUps questions={latest?.followups} error={latest?.followup_error} onPick={onPickQuestion} onHover={setHighlighted} />
 
       {imageFindings}
