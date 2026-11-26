@@ -96,6 +96,7 @@ class TestSlice4ApiEndpoint(unittest.TestCase):
         import json
 
         from fastapi.testclient import TestClient
+        from auth_test_helpers import seed_demo, sign_in
         import db
         import main
         import seed
@@ -115,8 +116,9 @@ class TestSlice4ApiEndpoint(unittest.TestCase):
             patch("main.followups.suggest", return_value=[]),
             patch("main.generate_image", return_value={"image_url": "/generated/review.jpg"}) as generate,
         ):
-            seed.seed()
+            seed_demo()
             client = TestClient(main.app)
+            sign_in(client)
             session = db.create_session(seed.CASE_ID, "Suresh Deshmukh")
             before = db.get_case(seed.CASE_ID)["evidence"]
             result = client.post(f"/sessions/{session['id']}/statements", json={"text": text})
@@ -141,6 +143,7 @@ class TestSlice4ApiEndpoint(unittest.TestCase):
 
     def test_statement_prompt_is_used_and_only_approved_image_reaches_case_file(self):
         from fastapi.testclient import TestClient
+        from auth_test_helpers import seed_demo, sign_in
         import db
         import main
         import seed
@@ -151,8 +154,9 @@ class TestSlice4ApiEndpoint(unittest.TestCase):
             patch("tools.image_gen.requests.post") as post,
             patch("db.DB_PATH", str(Path(folder) / "illustrations.db")),
         ):
-            seed.seed()
+            seed_demo()
             client = TestClient(main.app)
+            sign_in(client)
             session = db.create_session(seed.CASE_ID, "Ramesh Kulkarni")
             statement = db.add_statement(session["id"], "I saw a white scooter near the shop shutter.")
             suggested = "A white scooter near a shop shutter."
@@ -169,7 +173,7 @@ class TestSlice4ApiEndpoint(unittest.TestCase):
             review = f"{endpoint}/review"
             self.assertEqual(client.post(review, json={"preview": "/generated/arbitrary.jpg", "approve": True}).status_code, 409)
             self.assertEqual(client.post(endpoint.replace(f"/sessions/{session['id']}/", "/sessions/999/")).status_code, 404)
-            with patch("tools.image_gen.OUTPUT_DIR", Path(folder)):
+            with patch("tools.image_gen.OUTPUT_DIR", Path(folder)), patch("main.OUTPUT_DIR", Path(folder)):
                 draft = client.post(endpoint).json()
                 preview = draft["illustration_preview"]
                 self.assertEqual((Path(folder) / Path(preview).name).read_bytes(), _TEST_JPEG)
@@ -177,7 +181,9 @@ class TestSlice4ApiEndpoint(unittest.TestCase):
                 self.assertIsNone(draft["image"])
                 on_file = next(r for r in db.get_case(seed.CASE_ID)["evidence"] if r["id"] == record["id"])
                 self.assertIsNone(on_file["image"])
+                self.assertEqual(client.get(preview).content, _TEST_JPEG)
                 self.assertEqual(client.post(review, json={"preview": preview, "approve": False}).status_code, 200)
+                self.assertEqual(client.get(preview).status_code, 404)
                 self.assertEqual(client.post(review, json={"preview": preview, "approve": True}).status_code, 409)
                 preview = client.post(endpoint).json()["illustration_preview"]
                 approved = client.post(review, json={"preview": preview, "approve": True}).json()

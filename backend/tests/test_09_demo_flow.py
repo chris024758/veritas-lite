@@ -1,5 +1,5 @@
 """The final demo, end to end over real HTTP. Needs a FRESH run_fake_stack.py (demo seed, no
-interviews). Gemini's decisions are SCRIPTED; everything else is real.
+interviews). Gemini and Cloudflare responses are scripted.
 
 1. Street cleaner (added live): a black SUV -> new case record with an illustration suggestion.
 2. Suresh: the maps flag only, no clash with anything seeded.
@@ -13,8 +13,12 @@ import tempfile
 import requests
 from docx import Document
 
+from auth_test_helpers import sign_in
+
 sys.stdout.reconfigure(encoding="utf-8")
 API = "http://localhost:8018"
+client = requests.Session()
+sign_in(client, API)
 CASE = "2026-PUN-0219"
 CLEANER = ("Around quarter past ten I was sweeping near the jewellers on FC Road. A black SUV was standing in "
            "the back lane with its engine running. It had a big round sticker on the rear glass, a red trident "
@@ -37,15 +41,15 @@ def check(label, condition, detail=""):
 
 
 def post(path, **kwargs):
-    return requests.post(f"{API}{path}", timeout=120, **kwargs)
+    return client.post(f"{API}{path}", timeout=120, **kwargs)
 
 
 def case_file():
-    return requests.get(f"{API}/cases/{CASE}").json()
+    return client.get(f"{API}/cases/{CASE}").json()
 
 
 # Directory and seeded case file
-cases = requests.get(f"{API}/cases").json()
+cases = client.get(f"{API}/cases").json()
 check("directory lists the jewellers case and placeholders", [c["id"] for c in cases][0] == CASE and len(cases) == 3)
 check("jewellers case starts with no interviews", cases[0]["interviews"] == 0 and cases[0]["people"] == 2)
 case = case_file()
@@ -54,7 +58,7 @@ check("seed holds on-site records only", [e["evidence_type"] for e in case["evid
       == ["rear_shutter_lock", "display_cabinet", "insurance_claim", "stolen_items"])
 stolen = next(e for e in case["evidence"] if e["evidence_type"] == "stolen_items")
 check("stolen items seeded with details and images", len(stolen["items"]) == 4 and all(i["image"] for i in stolen["items"]))
-check("illustrations are served", requests.get(API + stolen["image"]).headers["content-type"].startswith("image/svg"))
+check("illustrations are served", client.get(API + stolen["image"]).headers["content-type"].startswith("image/svg"))
 people = {s["full_name"]: s for s in case["subjects"]}
 check("Ramesh is Suresh's friend", people["Ramesh Kulkarni"]["notes"].startswith("Suresh's friend"))
 
@@ -77,7 +81,15 @@ check("the record is a vehicle sighting from his statement", suv["evidence_type"
       and suv["source"] == "statement" and suv["subject_id"] == cleaner["id"] and suv["session_id"] == s1)
 check("the record carries time and place", suv["metadata"]["time"] == "22:15" and "back lane" in suv["metadata"]["location"])
 check("the record has a suggested prompt and awaits generation", suv["illustration_prompt"] and suv["image"] is None)
+illustration = f"/sessions/{s1}/evidence/{suv['id']}/illustration"
+draft = post(illustration)
+preview = draft.json()["illustration_preview"]
+check("generating a preview leaves the case image empty", draft.status_code == 200 and draft.json()["image"] is None)
+check("the authenticated investigator can load the preview", client.get(API + preview).content.startswith(b"\xff\xd8\xff"))
+approved = post(f"{illustration}/review", json={"preview": preview, "approve": True})
+check("approval saves the illustration", approved.status_code == 200 and approved.json()["image"] == preview)
 on_file = next(e for e in case_file()["evidence"] if e["id"] == suv["id"])
+check("the case file displays only the approved illustration", on_file["image"] == preview and on_file["image_kind"] == "generated")
 check("the case file shows who provided it", on_file["provided_by"] == "Ganesh Pawar")
 check("no clashes for the cleaner", body["alibi_findings"] == [])
 post(f"/sessions/{s1}/end")
@@ -102,7 +114,7 @@ findings = body["alibi_findings"]
 check("Ramesh's statement clashes with Suresh's (WITNESS)", [f["kind"] for f in findings] == ["WITNESS"]
       and findings[0]["source"]["id"] == at_ramesh["id"], findings[0]["explanation"] if findings else "")
 check("Ramesh adds no case record by speaking", body["new_records"] == [])
-status_before_upload = next(c["status"] for c in requests.get(f"{API}/sessions/{s2}").json()["statements"][0]["claims"]
+status_before_upload = next(c["status"] for c in client.get(f"{API}/sessions/{s2}").json()["statements"][0]["claims"]
                             if c["id"] == at_ramesh["id"])
 
 r = post(f"/sessions/{s3}/attachments", files={"image": ("ticket.png", PNG, "image/png")}, data={"caption": "Concert ticket"})
@@ -111,9 +123,9 @@ check("ticket uploaded", r.status_code == 200, r.text)
 ticket = upload["evidence"]
 check("ticket filed as a record with its photo", ticket["source"] == "upload" and ticket["image_kind"] == "photo"
       and ticket["image"] == upload["url"] and ticket["metadata"]["caption"] == "Concert ticket")
-suresh_claim = next(c for c in requests.get(f"{API}/sessions/{s2}").json()["statements"][0]["claims"] if c["id"] == at_ramesh["id"])
+suresh_claim = next(c for c in client.get(f"{API}/sessions/{s2}").json()["statements"][0]["claims"] if c["id"] == at_ramesh["id"])
 check("ticket does not change Suresh's claim status", suresh_claim["status"] == status_before_upload, suresh_claim["reason"])
-history = requests.get(f"{API}/sessions/{s3}").json()
+history = client.get(f"{API}/sessions/{s3}").json()
 check("the upload is linked to its record", history["attachments"][0]["evidence_id"] == ticket["id"])
 
 r = post(f"/sessions/{s3}/attachments", files={"image": ("old.png", PNG, "image/png")})
@@ -121,7 +133,7 @@ check("an image without a caption is filed by filename", r.json()["evidence"]["d
 check("non-image upload 415", post(f"/sessions/{s3}/attachments", files={"image": ("a.txt", b"hi", "text/plain")}).status_code == 415)
 
 # Timeline: the SUV has a time, the ticket is untimed, and only the witness clash is linked.
-view = requests.get(f"{API}/cases/{CASE}/timeline").json()
+view = client.get(f"{API}/cases/{CASE}/timeline").json()
 lane = {e["id"]: e for e in view["events"] if e["lane"] == "evidence"}
 check("SUV and ticket are on the evidence lane", lane[f"e{suv['id']}"]["start"] == 1335
       and any(e["id"] == f"e{ticket['id']}" and e["lane"] == "evidence" for e in view["untimed"]))
@@ -132,7 +144,7 @@ post(f"/sessions/{s3}/end")
 check("upload after end 409", post(f"/sessions/{s3}/attachments", files={"image": ("r.png", PNG, "image/png")}).status_code == 409)
 report = post(f"/sessions/{s3}/report").json()
 check("report has the witness clash and the uploads", len(report["alibi_findings"]) == 1 and len(report["attachments"]) == 2)
-r = requests.get(f"{API}/sessions/{s3}/report.docx")
+r = client.get(f"{API}/sessions/{s3}/report.docx")
 check("docx served as Word", r.status_code == 200 and "wordprocessingml" in r.headers["content-type"])
 handle, path = tempfile.mkstemp(suffix=".docx")
 try:

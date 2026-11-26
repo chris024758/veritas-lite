@@ -1,9 +1,9 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import {
-  endSession, generateReport, getCase, getTimeline, reportDocxUrl, startSession, submitStatement,
+  checkSession, endSession, generateReport, getCase, getTimeline, logout, reportDocxUrl, startSession, submitStatement,
 } from "./api.js";
 import CaseDirectory from "./CaseDirectory.jsx";
-import LoginPage, { useSignIn } from "./LoginPage.jsx";
+import LoginPage from "./LoginPage.jsx";
 import CaseFile from "./CaseFile.jsx";
 import CaseFilePanel from "./CaseFilePanel.jsx";
 import FlagPopover, { FindingBody } from "./FlagPopover.jsx";
@@ -39,12 +39,27 @@ function Dialog({ title, children, onCancel }) {
 }
 
 export default function App() {
-  const [signedIn, signIn] = useSignIn();
-  if (!signedIn) return <LoginPage onEnter={signIn} />;
-  return <Workspace />;
+  const [signedIn, setSignedIn] = useState(null);
+  useEffect(() => {
+    let active = true;
+    const expire = () => setSignedIn(false);
+    window.addEventListener("veritas-session-expired", expire);
+    checkSession().then(
+      () => { if (active) setSignedIn(true); },
+      () => { if (active) setSignedIn(false); },
+    );
+    return () => {
+      active = false;
+      window.removeEventListener("veritas-session-expired", expire);
+    };
+  }, []);
+  if (signedIn === null) return <main className="page center-load"><VeritasLoader size={0.6} /></main>;
+  if (!signedIn) return <LoginPage onEnter={() => setSignedIn(true)} />;
+  return <Workspace onSignOut={() => setSignedIn(false)} />;
 }
 
-function Workspace() {
+function Workspace({ onSignOut }) {
+  const [signOutError, setSignOutError] = useState("");
   const route = useRoute();
   const caseId = route.name === "case" ? route.caseId : null;
   const [caseData, setCaseData] = useState(null);
@@ -227,6 +242,16 @@ function Workspace() {
 
   const onSnapshot = useCallback((shot) => setSnapshot(shot), []);
 
+  async function signOut() {
+    setSignOutError("");
+    try {
+      await logout();
+      onSignOut();
+    } catch (err) {
+      setSignOutError(err.message);
+    }
+  }
+
   return (
     <div className="app">
       <header className="topbar glass">
@@ -250,6 +275,8 @@ function Workspace() {
           </nav>
         )}
         <div className="topbar-right">
+          <button type="button" className="secondary" onClick={signOut}>Sign out</button>
+          {signOutError && <span className="error" role="alert">{signOutError}</span>}
           {active && (
             <FlagPopover
               placement="bottom"

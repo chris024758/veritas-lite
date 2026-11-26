@@ -232,8 +232,8 @@ def verify_statement_full(claims: list[dict], statement: str, statement_id: int,
             final_text = gemini_client.generate(gemini_client.MODEL, contents, config(False)).text
             verdicts = _parse_verdicts(final_text)
             model_calls += 1
-    except (errors.APIError, gemini_client.GeminiNotConfigured, ValueError) as exc:
-        return {"results": [outcome("PENDING", f"Verification did not complete: {exc}", []) for _ in claims],
+    except (errors.APIError, gemini_client.GeminiNotConfigured, ValueError):
+        return {"results": [outcome("PENDING", "Verification did not complete.", []) for _ in claims],
                 "records": [], "tool_calls": tool_calls}
 
     if verdicts is None:

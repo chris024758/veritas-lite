@@ -45,8 +45,11 @@ class ImageExtractionTests(unittest.TestCase):
 
     def test_api_accepts_upload_and_rejects_invalid_type(self):
         from fastapi.testclient import TestClient
+        from auth_test_helpers import seed_demo, sign_in
         from main import app
         client = TestClient(app)
+        seed_demo()
+        sign_in(client)
         with patch("main.extract_image", return_value={"model": "test", **RESULT}):
             response = client.post("/tools/extract-image", files={"image": ("test.png", PNG, "image/png")})
         self.assertEqual(response.status_code, 200)
@@ -56,11 +59,14 @@ class ImageExtractionTests(unittest.TestCase):
 
     def test_event_upload_checks_web_and_requires_cited_evidence_for_a_flag(self):
         from fastapi.testclient import TestClient
+        from auth_test_helpers import seed_demo, sign_in
         from main import app
 
         event = {"title": "Demo concert", "date": "12 July 2026", "venue": "Demo Hall"}
         source = {"title": "Demo Hall", "uri": "https://example.org/concert"}
         client = TestClient(app)
+        seed_demo()
+        sign_in(client)
         cases = [
             ("CONFIRMED\nThe venue reported that the concert took place.", [source], True),
             ("CONTRADICTED\nThe venue cancelled the concert.", [source], False),
@@ -80,6 +86,7 @@ class ImageExtractionTests(unittest.TestCase):
 
     def test_attachment_is_filed_and_verified_without_using_it_in_statement_checks(self):
         from fastapi.testclient import TestClient
+        from auth_test_helpers import seed_demo, sign_in
         import db
         import main
         import seed
@@ -90,8 +97,9 @@ class ImageExtractionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
             path = Path(directory)
             with patch.object(db, "DB_PATH", str(path / "test.db")), patch.object(main, "UPLOAD_DIR", path):
-                seed.seed()
+                seed_demo()
                 client = TestClient(main.app)
+                sign_in(client)
                 started = client.post("/sessions/start", json={"case_id": seed.CASE_ID, "subject_name": "Ramesh Kulkarni"})
                 started.raise_for_status()
                 session = started.json()["session_id"]

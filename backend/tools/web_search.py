@@ -14,8 +14,8 @@ def web_search(query: str, *, cited_only: bool = False) -> dict:
             f"Answer briefly from a web search, in at most three sentences: {query}",
             types.GenerateContentConfig(tools=[types.Tool(google_search=types.GoogleSearch())]),
         )
-    except (errors.APIError, gemini_client.GeminiNotConfigured) as exc:
-        return {"query": query, "answer": None, "sources": [], "error": str(exc)}
+    except (errors.APIError, gemini_client.GeminiNotConfigured):
+        return {"query": query, "answer": None, "sources": [], "error": "Web search is unavailable."}
 
     sources = []
     candidate = response.candidates[0] if response.candidates else None
