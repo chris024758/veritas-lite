@@ -1,0 +1,5 @@
+$kind: http-request
+description: ""
+url: http://127.0.0.1:8018/sessions/1
+method: GET
+order: 4000

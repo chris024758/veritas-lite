@@ -1,0 +1,690 @@
+{
+  "created_at": "2026-11-26T19:27:43.720388+00:00",
+  "label": null,
+  "metrics": {
+    "trials": 8,
+    "extraction_precision": 1.0,
+    "extraction_recall": 1.0,
+    "extraction_f1": 1.0,
+    "verdict_accuracy": 1.0,
+    "verdict_macro_f1": 1.0,
+    "confusion_matrix": {
+      "PENDING": {
+        "PENDING": 2,
+        "CONSISTENT": 0,
+        "CONFLICT": 0,
+        "FLAGGED": 0,
+        "MISSING": 0
+      },
+      "CONSISTENT": {
+        "PENDING": 0,
+        "CONSISTENT": 2,
+        "CONFLICT": 0,
+        "FLAGGED": 0,
+        "MISSING": 0
+      },
+      "CONFLICT": {
+        "PENDING": 0,
+        "CONSISTENT": 0,
+        "CONFLICT": 2,
+        "FLAGGED": 0,
+        "MISSING": 0
+      },
+      "FLAGGED": {
+        "PENDING": 0,
+        "CONSISTENT": 0,
+        "CONFLICT": 0,
+        "FLAGGED": 2,
+        "MISSING": 0
+      }
+    },
+    "pipeline_success_rate": 1.0,
+    "repeat_verdict_agreement": 1.0,
+    "unsupported_conflict_claims": 0,
+    "false_conflict_rate": 0.0,
+    "latency_samples": 8,
+    "p50_seconds": 5.534,
+    "p95_seconds": 40.827,
+    "statement_verifier_calls_mean": 2.0,
+    "stage_failure_counts": {},
+    "grounding_review_needed": 8
+  },
+  "trials": [
+    {
+      "id": "EVAL-01-PENDING",
+      "person": "Alex Vale",
+      "location": "Alder Workshop",
+      "clock": "18:05",
+      "statement": "I was inside Alder Workshop at 18:05.",
+      "expected": "PENDING",
+      "record": null,
+      "run": 1,
+      "elapsed_seconds": 5.242770100012422,
+      "claims": [
+        {
+          "id": 1,
+          "statement_id": 1,
+          "claim_type": "TIMELINE",
+          "text": "I was inside Alder Workshop at 18:05.",
+          "status": "PENDING",
+          "reason": "The case records contain no information regarding Alex Vale's location at 18:05 or Alder Workshop.",
+          "entities": {
+            "time": "18:05",
+            "time_start": "18:05",
+            "time_approx": false,
+            "location": "Alder Workshop",
+            "person": "I"
+          },
+          "details": {
+            "tool_calls": [
+              {
+                "id": 1,
+                "name": "search_case_file",
+                "args": {
+                  "query": "Alex Vale",
+                  "case_id": "EVAL-01-PENDING"
+                },
+                "result": {
+                  "query_terms": [
+                    "alex",
+                    "vale"
+                  ],
+                  "case": {
+                    "id": "EVAL-01-PENDING",
+                    "name": "Fictional timeline evaluation",
+                    "location": null
+                  },
+                  "subjects": [
+                    {
+                      "full_name": "Alex Vale",
+                      "nicknames": null,
+                      "role": "Witness",
+                      "notes": null
+                    }
+                  ],
+                  "evidence": [],
+                  "prior_statements": [],
+                  "prior_claims": []
+                }
+              },
+              {
+                "id": 2,
+                "name": "search_case_file",
+                "args": {
+                  "case_id": "EVAL-01-PENDING",
+                  "query": "Alder Workshop"
+                },
+                "result": {
+                  "query_terms": [
+                    "alder",
+                    "workshop"
+                  ],
+                  "case": {
+                    "id": "EVAL-01-PENDING",
+                    "name": "Fictional timeline evaluation",
+                    "location": null
+                  },
+                  "subjects": [],
+                  "evidence": [],
+                  "prior_statements": [],
+                  "prior_claims": []
+                }
+              }
+            ],
+            "statement_tool_calls": 2,
+            "statement_model_calls": 2
+          },
+          "illustration": null,
+          "matches_reference": true
+        }
+      ],
+      "extraction_match": true,
+      "verdict": "PENDING",
+      "scored_verdict": "PENDING",
+      "stage_failures": [],
+      "unsupported_conflict_claims": 0,
+      "statement_verifier_calls": 2,
+      "grounding_review": null
+    },
+    {
+      "id": "EVAL-01-CONSISTENT",
+      "person": "Alex Vale",
+      "location": "Alder Workshop",
+      "clock": "18:05",
+      "statement": "I was inside Alder Workshop at 18:05.",
+      "expected": "CONSISTENT",
+      "record": "At Alder Workshop, the access record for Alex Vale confirms they were inside at 18:05.",
+      "run": 1,
+      "elapsed_seconds": 5.047545099980198,
+      "claims": [
+        {
+          "id": 2,
+          "statement_id": 2,
+          "claim_type": "TIMELINE",
+          "text": "I was inside Alder Workshop at 18:05.",
+          "status": "CONSISTENT",
+          "reason": "The access record confirms Alex Vale was inside Alder Workshop at 18:05.",
+          "entities": {
+            "time": "18:05",
+            "time_start": "18:05",
+            "time_approx": false,
+            "location": "Alder Workshop",
+            "person": "I"
+          },
+          "details": {
+            "tool_calls": [
+              {
+                "id": 1,
+                "name": "search_case_file",
+                "args": {
+                  "case_id": "EVAL-01-CONSISTENT",
+                  "query": "Alex Vale"
+                },
+                "result": {
+                  "query_terms": [
+                    "alex",
+                    "vale"
+                  ],
+                  "case": {
+                    "id": "EVAL-01-CONSISTENT",
+                    "name": "Fictional timeline evaluation",
+                    "location": null
+                  },
+                  "subjects": [
+                    {
+                      "full_name": "Alex Vale",
+                      "nicknames": null,
+                      "role": "Witness",
+                      "notes": null
+                    }
+                  ],
+                  "evidence": [
+                    {
+                      "evidence_type": "activity_record",
+                      "description": "At Alder Workshop, the access record for Alex Vale confirms they were inside at 18:05.",
+                      "metadata": {}
+                    }
+                  ],
+                  "prior_statements": [],
+                  "prior_claims": []
+                }
+              }
+            ],
+            "statement_tool_calls": 1,
+            "statement_model_calls": 2
+          },
+          "illustration": null,
+          "matches_reference": true
+        }
+      ],
+      "extraction_match": true,
+      "verdict": "CONSISTENT",
+      "scored_verdict": "CONSISTENT",
+      "stage_failures": [],
+      "unsupported_conflict_claims": 0,
+      "statement_verifier_calls": 2,
+      "grounding_review": null
+    },
+    {
+      "id": "EVAL-01-CONFLICT",
+      "person": "Alex Vale",
+      "location": "Alder Workshop",
+      "clock": "18:05",
+      "statement": "I was inside Alder Workshop at 18:05.",
+      "expected": "CONFLICT",
+      "record": "At Alder Workshop, the access record for Alex Vale is complete and shows they were absent at 18:05. Their first entry was at 18:40.",
+      "run": 1,
+      "elapsed_seconds": 10.689611500012688,
+      "claims": [
+        {
+          "id": 3,
+          "statement_id": 3,
+          "claim_type": "TIMELINE",
+          "text": "I was inside Alder Workshop at 18:05.",
+          "status": "CONFLICT",
+          "reason": "The access record for Alder Workshop states that Alex Vale was absent at 18:05.",
+          "entities": {
+            "time": "18:05",
+            "time_start": "18:05",
+            "time_approx": false,
+            "location": "Alder Workshop",
+            "person": "I"
+          },
+          "details": {
+            "tool_calls": [
+              {
+                "id": 1,
+                "name": "search_case_file",
+                "args": {
+                  "case_id": "EVAL-01-CONFLICT",
+                  "query": "Alder Workshop"
+                },
+                "result": {
+                  "query_terms": [
+                    "alder",
+                    "workshop"
+                  ],
+                  "case": {
+                    "id": "EVAL-01-CONFLICT",
+                    "name": "Fictional timeline evaluation",
+                    "location": null
+                  },
+                  "subjects": [],
+                  "evidence": [
+                    {
+                      "evidence_type": "activity_record",
+                      "description": "At Alder Workshop, the access record for Alex Vale is complete and shows they were absent at 18:05. Their first entry was at 18:40.",
+                      "metadata": {}
+                    }
+                  ],
+                  "prior_statements": [],
+                  "prior_claims": []
+                }
+              }
+            ],
+            "statement_tool_calls": 1,
+            "statement_model_calls": 2
+          },
+          "illustration": null,
+          "matches_reference": true
+        }
+      ],
+      "extraction_match": true,
+      "verdict": "CONFLICT",
+      "scored_verdict": "CONFLICT",
+      "stage_failures": [],
+      "unsupported_conflict_claims": 0,
+      "statement_verifier_calls": 2,
+      "grounding_review": null
+    },
+    {
+      "id": "EVAL-01-FLAGGED",
+      "person": "Alex Vale",
+      "location": "Alder Workshop",
+      "clock": "18:05",
+      "statement": "I was inside Alder Workshop at 18:05.",
+      "expected": "FLAGGED",
+      "record": "A witness at Alder Workshop remembers Alex Vale arriving around 18:40. The witness had no clock and does not know their exact arrival time.",
+      "run": 1,
+      "elapsed_seconds": 17.275635199970566,
+      "claims": [
+        {
+          "id": 4,
+          "statement_id": 4,
+          "claim_type": "TIMELINE",
+          "text": "I was inside Alder Workshop at 18:05.",
+          "status": "FLAGGED",
+          "reason": "A witness at Alder Workshop remembers Alex Vale arriving around 18:40 rather than 18:05, making the stated arrival time doubtful.",
+          "entities": {
+            "time": "18:05",
+            "time_start": "18:05",
+            "time_approx": false,
+            "location": "Alder Workshop",
+            "person": "I"
+          },
+          "details": {
+            "tool_calls": [
+              {
+                "id": 1,
+                "name": "search_case_file",
+                "args": {
+                  "query": "Alder Workshop",
+                  "case_id": "EVAL-01-FLAGGED"
+                },
+                "result": {
+                  "query_terms": [
+                    "alder",
+                    "workshop"
+                  ],
+                  "case": {
+                    "id": "EVAL-01-FLAGGED",
+                    "name": "Fictional timeline evaluation",
+                    "location": null
+                  },
+                  "subjects": [],
+                  "evidence": [
+                    {
+                      "evidence_type": "activity_record",
+                      "description": "A witness at Alder Workshop remembers Alex Vale arriving around 18:40. The witness had no clock and does not know their exact arrival time.",
+                      "metadata": {}
+                    }
+                  ],
+                  "prior_statements": [],
+                  "prior_claims": []
+                }
+              }
+            ],
+            "statement_tool_calls": 1,
+            "statement_model_calls": 2
+          },
+          "illustration": null,
+          "matches_reference": true
+        }
+      ],
+      "extraction_match": true,
+      "verdict": "FLAGGED",
+      "scored_verdict": "FLAGGED",
+      "stage_failures": [],
+      "unsupported_conflict_claims": 0,
+      "statement_verifier_calls": 2,
+      "grounding_review": null
+    },
+    {
+      "id": "EVAL-01-PENDING",
+      "person": "Alex Vale",
+      "location": "Alder Workshop",
+      "clock": "18:05",
+      "statement": "I was inside Alder Workshop at 18:05.",
+      "expected": "PENDING",
+      "record": null,
+      "run": 2,
+      "elapsed_seconds": 6.553870000003371,
+      "claims": [
+        {
+          "id": 5,
+          "statement_id": 5,
+          "claim_type": "TIMELINE",
+          "text": "I was inside Alder Workshop at 18:05.",
+          "status": "PENDING",
+          "reason": "The case records contain no information to verify Alex Vale's location at 18:05.",
+          "entities": {
+            "time": "18:05",
+            "time_start": "18:05",
+            "time_approx": false,
+            "location": "Alder Workshop",
+            "person": "I"
+          },
+          "details": {
+            "tool_calls": [
+              {
+                "id": 1,
+                "name": "search_case_file",
+                "args": {
+                  "case_id": "EVAL-01-PENDING",
+                  "query": "Alex Vale"
+                },
+                "result": {
+                  "query_terms": [
+                    "alex",
+                    "vale"
+                  ],
+                  "case": {
+                    "id": "EVAL-01-PENDING",
+                    "name": "Fictional timeline evaluation",
+                    "location": null
+                  },
+                  "subjects": [
+                    {
+                      "full_name": "Alex Vale",
+                      "nicknames": null,
+                      "role": "Witness",
+                      "notes": null
+                    }
+                  ],
+                  "evidence": [],
+                  "prior_statements": [],
+                  "prior_claims": []
+                }
+              }
+            ],
+            "statement_tool_calls": 1,
+            "statement_model_calls": 2
+          },
+          "illustration": null,
+          "matches_reference": true
+        }
+      ],
+      "extraction_match": true,
+      "verdict": "PENDING",
+      "scored_verdict": "PENDING",
+      "stage_failures": [],
+      "unsupported_conflict_claims": 0,
+      "statement_verifier_calls": 2,
+      "grounding_review": null
+    },
+    {
+      "id": "EVAL-01-CONSISTENT",
+      "person": "Alex Vale",
+      "location": "Alder Workshop",
+      "clock": "18:05",
+      "statement": "I was inside Alder Workshop at 18:05.",
+      "expected": "CONSISTENT",
+      "record": "At Alder Workshop, the access record for Alex Vale confirms they were inside at 18:05.",
+      "run": 2,
+      "elapsed_seconds": 5.5081670000217855,
+      "claims": [
+        {
+          "id": 6,
+          "statement_id": 6,
+          "claim_type": "TIMELINE",
+          "text": "I was inside Alder Workshop at 18:05.",
+          "status": "CONSISTENT",
+          "reason": "The access record for Alder Workshop confirms Alex Vale was inside at 18:05.",
+          "entities": {
+            "time": "18:05",
+            "time_start": "18:05",
+            "time_approx": false,
+            "location": "Alder Workshop",
+            "person": "I"
+          },
+          "details": {
+            "tool_calls": [
+              {
+                "id": 1,
+                "name": "search_case_file",
+                "args": {
+                  "case_id": "EVAL-01-CONSISTENT",
+                  "query": "Alex Vale"
+                },
+                "result": {
+                  "query_terms": [
+                    "alex",
+                    "vale"
+                  ],
+                  "case": {
+                    "id": "EVAL-01-CONSISTENT",
+                    "name": "Fictional timeline evaluation",
+                    "location": null
+                  },
+                  "subjects": [
+                    {
+                      "full_name": "Alex Vale",
+                      "nicknames": null,
+                      "role": "Witness",
+                      "notes": null
+                    }
+                  ],
+                  "evidence": [
+                    {
+                      "evidence_type": "activity_record",
+                      "description": "At Alder Workshop, the access record for Alex Vale confirms they were inside at 18:05.",
+                      "metadata": {}
+                    }
+                  ],
+                  "prior_statements": [],
+                  "prior_claims": []
+                }
+              }
+            ],
+            "statement_tool_calls": 1,
+            "statement_model_calls": 2
+          },
+          "illustration": null,
+          "matches_reference": true
+        }
+      ],
+      "extraction_match": true,
+      "verdict": "CONSISTENT",
+      "scored_verdict": "CONSISTENT",
+      "stage_failures": [],
+      "unsupported_conflict_claims": 0,
+      "statement_verifier_calls": 2,
+      "grounding_review": null
+    },
+    {
+      "id": "EVAL-01-CONFLICT",
+      "person": "Alex Vale",
+      "location": "Alder Workshop",
+      "clock": "18:05",
+      "statement": "I was inside Alder Workshop at 18:05.",
+      "expected": "CONFLICT",
+      "record": "At Alder Workshop, the access record for Alex Vale is complete and shows they were absent at 18:05. Their first entry was at 18:40.",
+      "run": 2,
+      "elapsed_seconds": 5.5342374999891035,
+      "claims": [
+        {
+          "id": 7,
+          "statement_id": 7,
+          "claim_type": "TIMELINE",
+          "text": "I was inside Alder Workshop at 18:05.",
+          "status": "CONFLICT",
+          "reason": "The access record for Alder Workshop states that Alex Vale was absent at 18:05, showing their first entry was at 18:40.",
+          "entities": {
+            "time": "18:05",
+            "time_start": "18:05",
+            "time_approx": false,
+            "location": "Alder Workshop",
+            "person": "I"
+          },
+          "details": {
+            "tool_calls": [
+              {
+                "id": 1,
+                "name": "search_case_file",
+                "args": {
+                  "query": "Alex Vale",
+                  "case_id": "EVAL-01-CONFLICT"
+                },
+                "result": {
+                  "query_terms": [
+                    "alex",
+                    "vale"
+                  ],
+                  "case": {
+                    "id": "EVAL-01-CONFLICT",
+                    "name": "Fictional timeline evaluation",
+                    "location": null
+                  },
+                  "subjects": [
+                    {
+                      "full_name": "Alex Vale",
+                      "nicknames": null,
+                      "role": "Witness",
+                      "notes": null
+                    }
+                  ],
+                  "evidence": [
+                    {
+                      "evidence_type": "activity_record",
+                      "description": "At Alder Workshop, the access record for Alex Vale is complete and shows they were absent at 18:05. Their first entry was at 18:40.",
+                      "metadata": {}
+                    }
+                  ],
+                  "prior_statements": [],
+                  "prior_claims": []
+                }
+              }
+            ],
+            "statement_tool_calls": 2,
+            "statement_model_calls": 2
+          },
+          "illustration": null,
+          "matches_reference": true
+        }
+      ],
+      "extraction_match": true,
+      "verdict": "CONFLICT",
+      "scored_verdict": "CONFLICT",
+      "stage_failures": [],
+      "unsupported_conflict_claims": 0,
+      "statement_verifier_calls": 2,
+      "grounding_review": null
+    },
+    {
+      "id": "EVAL-01-FLAGGED",
+      "person": "Alex Vale",
+      "location": "Alder Workshop",
+      "clock": "18:05",
+      "statement": "I was inside Alder Workshop at 18:05.",
+      "expected": "FLAGGED",
+      "record": "A witness at Alder Workshop remembers Alex Vale arriving around 18:40. The witness had no clock and does not know their exact arrival time.",
+      "run": 2,
+      "elapsed_seconds": 40.82734909997089,
+      "claims": [
+        {
+          "id": 8,
+          "statement_id": 8,
+          "claim_type": "TIMELINE",
+          "text": "I was inside Alder Workshop at 18:05.",
+          "status": "FLAGGED",
+          "reason": "An activity record notes that a witness at Alder Workshop remembers Alex Vale arriving around 18:40 rather than 18:05.",
+          "entities": {
+            "time": "18:05",
+            "time_start": "18:05",
+            "time_approx": false,
+            "location": "Alder Workshop",
+            "person": "I"
+          },
+          "details": {
+            "tool_calls": [
+              {
+                "id": 1,
+                "name": "search_case_file",
+                "args": {
+                  "query": "Alder Workshop",
+                  "case_id": "EVAL-01-FLAGGED"
+                },
+                "result": {
+                  "query_terms": [
+                    "alder",
+                    "workshop"
+                  ],
+                  "case": {
+                    "id": "EVAL-01-FLAGGED",
+                    "name": "Fictional timeline evaluation",
+                    "location": null
+                  },
+                  "subjects": [],
+                  "evidence": [
+                    {
+                      "evidence_type": "activity_record",
+                      "description": "A witness at Alder Workshop remembers Alex Vale arriving around 18:40. The witness had no clock and does not know their exact arrival time.",
+                      "metadata": {}
+                    }
+                  ],
+                  "prior_statements": [
+                    {
+                      "id": 4,
+                      "session_id": 4,
+                      "turn_index": 0,
+                      "text": "I was inside Alder Workshop at 18:05."
+                    }
+                  ],
+                  "prior_claims": [
+                    {
+                      "claim_type": "TIMELINE",
+                      "text": "I was inside Alder Workshop at 18:05.",
+                      "status": "FLAGGED",
+                      "reason": "A witness at Alder Workshop remembers Alex Vale arriving around 18:40 rather than 18:05, making the stated arrival time doubtful."
+                    }
+                  ]
+                }
+              }
+            ],
+            "statement_tool_calls": 2,
+            "statement_model_calls": 2
+          },
+          "illustration": null,
+          "matches_reference": true
+        }
+      ],
+      "extraction_match": true,
+      "verdict": "FLAGGED",
+      "scored_verdict": "FLAGGED",
+      "stage_failures": [],
+      "unsupported_conflict_claims": 0,
+      "statement_verifier_calls": 2,
+      "grounding_review": null
+    }
+  ]
+}

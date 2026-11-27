@@ -1,0 +1,14 @@
+$kind: http-request
+description: ""
+url: http://127.0.0.1:8018/sessions/start
+method: POST
+body:
+  type: json
+  content: "{\r
+
+    \  \"case_id\": \"2026-PUN-0219\",\r
+
+    \  \"subject_name\": \"Suresh Deshmukh\"\r
+
+    }"
+order: 2000
