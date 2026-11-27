@@ -128,6 +128,10 @@ class SubmitStatement(BaseModel):
     request_id: uuid.UUID | None = None
 
 
+class InterviewQuestion(BaseModel):
+    text: str
+
+
 class NewSubject(BaseModel):
     full_name: str
     role: str = "Witness"
@@ -391,6 +395,16 @@ def submit_statement(session_id: int, body: SubmitStatement):
     elif not db.recorded_segment_exists(session_id, segment_id):
         raise HTTPException(422, "recorded transcript clip does not belong to this interview")
     return run_pipeline(session, text, segment_id)
+
+
+@app.post("/sessions/{session_id}/questions", status_code=201)
+def save_interview_question(session_id: int, body: InterviewQuestion):
+    session = _require_session(session_id)
+    if session["ended_at"]:
+        raise HTTPException(409, "this interview has ended")
+    if not body.text.strip():
+        raise HTTPException(422, "question text is empty")
+    return db.add_transcript_segment(session_id, "typed", body.text, speaker="interviewer")
 
 
 @app.post("/sessions/{session_id}/audio")

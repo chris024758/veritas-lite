@@ -92,6 +92,24 @@ class TranscriptTests(unittest.TestCase):
         ])
         self.assertEqual(self.client.get(f"/cases/TEST/transcripts/{self.legacy}").status_code, 404)
 
+    def test_interviewer_questions_are_logged_without_analysis_and_in_order(self):
+        endpoint = f"/sessions/{self.first}/questions"
+        self.assertEqual(self.client.post(endpoint, json={"text": "  "}).status_code, 422)
+        question = self.client.post(endpoint, json={"text": " Where were you? "})
+        self.assertEqual(question.status_code, 201)
+        self.assertEqual(self.db.get_session_history(self.first)["statements"], [])
+        self.extract.assert_not_called()
+        self.record(self.first, "At the shop.")
+        self.assertEqual(self.client.post(endpoint, json={"text": "Who was with you?"}).status_code, 201)
+        entries = self.transcript(self.first)
+        self.assertEqual([(item["speaker"], item["raw_text"]) for item in entries], [
+            ("interviewer", " Where were you? "), ("interviewee", "At the shop."),
+            ("interviewer", "Who was with you?"),
+        ])
+        self.client.post(f"/sessions/{self.first}/end").raise_for_status()
+        self.assertEqual(self.client.post(endpoint, json={"text": "Too late"}).status_code, 409)
+        self.assertEqual(self.transcript(self.first), entries)
+
 
 if __name__ == "__main__":
     unittest.main()

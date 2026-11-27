@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS transcript_segments (
     session_id INTEGER NOT NULL REFERENCES sessions(id),
     sequence_no INTEGER NOT NULL CHECK (sequence_no > 0),
     source TEXT NOT NULL CHECK (source IN ('recorded', 'typed')),
+    speaker TEXT NOT NULL DEFAULT 'interviewee' CHECK (speaker IN ('interviewee', 'interviewer')),
     raw_text TEXT NOT NULL,
     created_at TEXT NOT NULL,
     request_id TEXT,
@@ -151,6 +152,7 @@ MIGRATIONS = [
     ("sessions", "report_json", "TEXT"),
     ("statements", "followups_json", "TEXT NOT NULL DEFAULT '[]'"),
     ("statements", "transcript_segment_id", "INTEGER REFERENCES transcript_segments(id)"),
+    ("transcript_segments", "speaker", "TEXT NOT NULL DEFAULT 'interviewee' CHECK (speaker IN ('interviewee', 'interviewer'))"),
     ("subjects", "phone", "TEXT"),
     ("subjects", "vehicle", "TEXT"),
     ("subjects", "plate", "TEXT"),
@@ -353,15 +355,16 @@ def save_report(session_id: int, report: dict) -> None:
         conn.execute("UPDATE sessions SET report_json = ? WHERE id = ?", (json.dumps(report), session_id))
 
 
-def add_transcript_segment(session_id: int, source: str, text: str, request_id: str | None = None) -> dict:
+def add_transcript_segment(session_id: int, source: str, text: str, request_id: str | None = None,
+                           *, speaker: str = "interviewee") -> dict:
     with connect() as conn:
         row = conn.execute(
-            """INSERT INTO transcript_segments (session_id, sequence_no, source, raw_text, created_at, request_id)
-               SELECT ?, COALESCE(MAX(sequence_no), 0) + 1, ?, ?, ?, ?
+            """INSERT INTO transcript_segments (session_id, sequence_no, source, speaker, raw_text, created_at, request_id)
+               SELECT ?, COALESCE(MAX(sequence_no), 0) + 1, ?, ?, ?, ?, ?
                FROM transcript_segments WHERE session_id = ?
                ON CONFLICT (session_id, request_id) DO NOTHING
                RETURNING id, raw_text""",
-            (session_id, source, text, datetime.now(timezone.utc).isoformat(), request_id, session_id),
+            (session_id, source, speaker, text, datetime.now(timezone.utc).isoformat(), request_id, session_id),
         ).fetchone()
         if row is None:
             row = conn.execute(
@@ -396,7 +399,7 @@ def list_transcripts(case_id: str) -> list[dict]:
 def get_transcript(case_id: str, session_id: int) -> list[dict]:
     with connect() as conn:
         rows = conn.execute(
-            """SELECT t.id, t.sequence_no, t.source, t.raw_text, t.created_at
+            """SELECT t.id, t.sequence_no, t.source, t.speaker, t.raw_text, t.created_at
                FROM transcript_segments t JOIN sessions s ON s.id = t.session_id
                WHERE s.case_id = ? AND s.id = ? ORDER BY t.sequence_no""",
             (case_id, session_id),

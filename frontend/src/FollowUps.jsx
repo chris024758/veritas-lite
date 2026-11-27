@@ -1,4 +1,4 @@
-export default function FollowUps({ questions, onPick, onHover, error }) {
+export default function FollowUps({ questions, onPick, onHover, error, disabled }) {
   if (error) return <p className="muted small">{error}</p>;
   if (!questions || questions.length === 0) return null;
   return (
@@ -9,6 +9,7 @@ export default function FollowUps({ questions, onPick, onHover, error }) {
           <li key={q.question}>
             <button
               type="button"
+              disabled={disabled}
               className={`followup-chip ${q.from_finding ? "from-finding" : ""}`}
               onClick={() => onPick(q.question)}
               onMouseEnter={() => onHover(q.targets_claim_ids)}

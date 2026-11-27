@@ -87,11 +87,13 @@ function Attachment({ a, checkingId, uploading, onCheck }) {
   );
 }
 
-export default function VoiceStage({ subject, sessionId, statements, attachments = [], onAttached, asking, onClearAsking, onSend, busy, ended, onReport, reportReady }) {
+export default function VoiceStage({ subject, sessionId, statements, attachments = [], onAttached, asking, onClearAsking,
+  onAsk, questionPending, onAnswerInProgress, onSend, busy, ended, onReport, reportReady }) {
   const [state, setState] = useState("ready"); // ready | listening | transcribing
   const [level, setLevel] = useState(0);
   const [caption, setCaption] = useState("");
   const [draft, setDraft] = useState(null); // { text, segmentId?, requestId? }
+  const [questionDraft, setQuestionDraft] = useState(null);
   const [error, setError] = useState(null);
   const [demoOpen, setDemoOpen] = useState(false);
   const [bars, setBars] = useState(() => Array(BAR_COUNT).fill(0));
@@ -103,6 +105,8 @@ export default function VoiceStage({ subject, sessionId, statements, attachments
   const endRef = useRef(null);
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" }); }, [statements.length, attachments.length, draft, busy]);
+  const answerInProgress = state !== "ready" || draft !== null;
+  useEffect(() => { onAnswerInProgress(answerInProgress); }, [answerInProgress, onAnswerInProgress]);
   useEffect(() => () => stopEverything(), []);
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
 
@@ -247,7 +251,7 @@ export default function VoiceStage({ subject, sessionId, statements, attachments
       onCheck={checkAttachment} />
   ));
 
-  const canTalk = !ended && !busy && draft === null && state !== "transcribing";
+  const canTalk = !ended && !busy && !questionPending && questionDraft === null && draft === null && state === "ready";
 
   return (
     <section className="voice-stage">
@@ -310,8 +314,23 @@ export default function VoiceStage({ subject, sessionId, statements, attachments
         <div className="stage-controls">
           {asking && (
             <p className="asking"><span>Asking</span>{asking}
-              <button type="button" className="icon-btn" onClick={onClearAsking} aria-label="Clear question">×</button>
+              <button type="button" className="icon-btn" onClick={onClearAsking} aria-label="Dismiss question"
+                title="The question stays in the transcript">×</button>
             </p>
+          )}
+          {questionDraft !== null && (
+            <form className="interviewer-question" onSubmit={async (event) => {
+              event.preventDefault();
+              if (await onAsk(questionDraft)) setQuestionDraft(null);
+            }}>
+              <label htmlFor="interviewer-question">Interviewer question</label>
+              <textarea id="interviewer-question" rows={2} value={questionDraft}
+                onChange={(event) => setQuestionDraft(event.target.value)} disabled={questionPending} autoFocus />
+              <div className="actions">
+                <button type="submit" className="primary" disabled={questionPending || !questionDraft.trim()}>Ask question</button>
+                <button type="button" className="secondary" disabled={questionPending} onClick={() => setQuestionDraft(null)}>Cancel</button>
+              </div>
+            </form>
           )}
           {pendingImage && (
             <div className="image-pending">
@@ -355,6 +374,7 @@ export default function VoiceStage({ subject, sessionId, statements, attachments
           )}
           {state === "transcribing" && <VeritasLoader size={0.3} label="Converting speech to text" />}
           <div className="stage-links">
+            <button type="button" className="link-btn" onClick={() => setQuestionDraft("")} disabled={!canTalk}>Add question</button>
             <button type="button" className="link-btn" onClick={() => setDraft({ text: "" })} disabled={!canTalk}>Type instead</button>
             <div className="demo-menu">
               <button type="button" className="link-btn" onClick={() => setDemoOpen((o) => !o)} disabled={!canTalk} aria-expanded={demoOpen}>Demo script</button>

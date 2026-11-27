@@ -46,6 +46,9 @@ export const submitStatement = (sessionId, text, segmentId, requestId) =>
     text, transcript_segment_id: segmentId, request_id: requestId,
   });
 
+export const saveQuestion = (sessionId, text) =>
+  postJson(`/sessions/${sessionId}/questions`, { text });
+
 export const listTranscripts = (caseId) => request(`/cases/${caseId}/transcripts`);
 
 export const getTranscript = (caseId, sessionId) => request(`/cases/${caseId}/transcripts/${sessionId}`);
