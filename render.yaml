@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: veritas-lite
+    runtime: python
+    plan: free
+    branch: deployement/sec
+    buildCommand: pip install -r backend/requirements-render.txt && npm --prefix frontend ci --include=dev && VITE_VERITAS_HOSTED=true npm --prefix frontend run build
+    startCommand: uvicorn --app-dir backend render_app:create_app --factory --host 0.0.0.0 --port "$PORT" --workers 1
+    healthCheckPath: /healthz
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.10
+      - key: NODE_VERSION
+        value: 22.16.0
+      - key: VERITAS_DB
+        value: /tmp/veritas-demo.db
+      - key: GEMINI_MAX_ATTEMPTS
+        value: '2'
+      - key: GEMINI_TIMEOUT_MS
+        value: '20000'
+      - key: VERITAS_DEMO_PASSWORD
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false

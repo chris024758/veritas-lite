@@ -1,8 +1,10 @@
 """Local Whisper speech-to-text on one short clip. Runs offline, no key."""
 import os
 import threading
+from typing import TYPE_CHECKING
 
-from faster_whisper import WhisperModel
+if TYPE_CHECKING:
+    from faster_whisper import WhisperModel
 
 MODEL_SIZE = os.getenv("WHISPER_MODEL", "base")
 
@@ -10,10 +12,12 @@ _model = None
 _model_lock = threading.Lock()
 
 
-def _get_model() -> WhisperModel:
+def _get_model() -> "WhisperModel":
     global _model
     with _model_lock:
         if _model is None:
+            from faster_whisper import WhisperModel
+
             _model = WhisperModel(MODEL_SIZE, device="cpu", compute_type="int8")
     return _model
 

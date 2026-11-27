@@ -114,6 +114,15 @@ print("scripted endless tools -> model calls:", len(seen), "| statuses:", [o["st
 assert len(seen) == verification.MAX_TOOL_ROUNDS + 1
 assert out[0]["status"] == "PENDING" and all(o["status"] == "PENDING" for o in out[1:])
 
+parallel_calls = [call("search_case_file", {"query": "x", "case_id": CASE})
+                  for _ in range(verification.MAX_TOOL_CALLS + 2)]
+seen = scripted([response(*parallel_calls), response(text('{"verdicts":[]}'))])
+batch = verification.verify_statement_full(two_claims, ALIBI, 1, CASE, SPEAKER)
+assert len(batch["tool_calls"]) == verification.MAX_TOOL_CALLS
+assert seen[1][1].tool_config.function_calling_config.mode == "NONE"
+over_budget = seen[1][0][2].parts[verification.MAX_TOOL_CALLS:]
+assert len(over_budget) == 2 and all(p.function_response.response.get("error") for p in over_budget)
+
 # 5. Gemini fails: every claim PENDING, no crash
 scripted([errors.ClientError(400, {"error": {"code": 400, "message": "scripted", "status": "INVALID_ARGUMENT"}})])
 out = verification.verify_statement(two_claims, ALIBI, 1, CASE, SPEAKER)

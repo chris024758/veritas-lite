@@ -15,6 +15,7 @@ from tools.web_search import web_search
 # Calls with tools enabled. One more tools-off call may follow to force the verdicts, so a
 # statement costs at most MAX_TOOL_ROUNDS + 1 verification calls, whatever its claim count.
 MAX_TOOL_ROUNDS = 3
+MAX_TOOL_CALLS = 8
 
 TOOL_DECLARATIONS = [
     types.FunctionDeclaration(
@@ -205,7 +206,8 @@ def verify_statement_full(claims: list[dict], statement: str, statement_id: int,
     try:
         response = None
         for _ in range(MAX_TOOL_ROUNDS):
-            response = gemini_client.generate(gemini_client.MODEL, contents, config(True))
+            tools_enabled = len(tool_calls) < MAX_TOOL_CALLS
+            response = gemini_client.generate(gemini_client.MODEL, contents, config(tools_enabled))
             model_calls += 1
             calls = response.function_calls or []
             if not calls:
@@ -213,6 +215,10 @@ def verify_statement_full(claims: list[dict], statement: str, statement_id: int,
             contents.append(response.candidates[0].content)
             parts = []
             for call in calls:
+                if len(tool_calls) >= MAX_TOOL_CALLS:
+                    parts.append(types.Part.from_function_response(
+                        name=call.name, response={"error": "Tool limit reached for this statement."}))
+                    continue
                 args = dict(call.args or {})
                 output = _dispatch(call.name, args, case_id, statement_id)
                 call_id = len(tool_calls) + 1

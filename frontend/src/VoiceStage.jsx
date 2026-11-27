@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { addAttachment, assetUrl, extractAttachment, transcribe } from "./api.js";
+import { addAttachment, assetUrl, extractAttachment, HOSTED_DEMO, transcribe } from "./api.js";
 import { eventVerdict } from "./ImageExtraction.jsx";
 import VeritasLoader from "./VeritasLoader.jsx";
 import { turnLabel } from "./findings.js";
@@ -354,7 +354,7 @@ export default function VoiceStage({ subject, sessionId, statements, attachments
             disabled={!canTalk || state !== "ready" || !!pendingImage || checkingId !== null}
             aria-label="Add an image" title="Add an image">+</button>
           <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden onChange={pickImage} />
-          <button
+          {HOSTED_DEMO ? <Orb level={level} state={state} /> : <button
             type="button"
             className="orb-btn"
             onClick={state === "listening" ? stopListening : startListening}
@@ -362,7 +362,7 @@ export default function VoiceStage({ subject, sessionId, statements, attachments
             aria-label={state === "listening" ? "Stop recording" : "Start recording"}
           >
             <Orb level={level} state={state} />
-          </button>
+          </button>}
           <span className="plus-spacer" aria-hidden="true" />
           </div>
           {state === "listening" && <Bars bars={bars} />}
@@ -375,7 +375,7 @@ export default function VoiceStage({ subject, sessionId, statements, attachments
           {state === "transcribing" && <VeritasLoader size={0.3} label="Converting speech to text" />}
           <div className="stage-links">
             <button type="button" className="link-btn" onClick={() => setQuestionDraft("")} disabled={!canTalk}>Add question</button>
-            <button type="button" className="link-btn" onClick={() => setDraft({ text: "" })} disabled={!canTalk}>Type instead</button>
+            <button type="button" className="link-btn" onClick={() => setDraft({ text: "" })} disabled={!canTalk}>{HOSTED_DEMO ? "Type answer" : "Type instead"}</button>
             <div className="demo-menu">
               <button type="button" className="link-btn" onClick={() => setDemoOpen((o) => !o)} disabled={!canTalk} aria-expanded={demoOpen}>Demo script</button>
               {demoOpen && (

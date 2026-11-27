@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import {
-  endSession, generateReport, getCase, getTimeline, reportDocxUrl, saveQuestion, startSession, submitStatement,
+  endSession, generateReport, getCase, getTimeline, HOSTED_DEMO, reportDocxUrl, saveQuestion, startSession, submitStatement,
 } from "./api.js";
 import CaseDirectory from "./CaseDirectory.jsx";
 import LoginPage, { useSignIn } from "./LoginPage.jsx";
@@ -41,7 +41,7 @@ function Dialog({ title, children, onCancel }) {
 
 export default function App() {
   const [signedIn, signIn] = useSignIn();
-  if (!signedIn) return <LoginPage onEnter={signIn} />;
+  if (!HOSTED_DEMO && !signedIn) return <LoginPage onEnter={signIn} />;
   return <Workspace />;
 }
 

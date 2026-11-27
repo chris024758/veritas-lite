@@ -1,11 +1,12 @@
-export const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8018";
+export const HOSTED_DEMO = import.meta.env.VITE_VERITAS_HOSTED === "true";
+export const API_URL = HOSTED_DEMO ? "" : (import.meta.env.VITE_API_URL || "http://localhost:8018");
 
 async function request(path, options) {
   let response;
   try {
     response = await fetch(`${API_URL}${path}`, options);
   } catch {
-    throw new Error(`Cannot reach the backend at ${API_URL}.`);
+    throw new Error(`Cannot reach the backend at ${API_URL || window.location.origin}.`);
   }
   const body = await response.json().catch(() => null);
   if (!response.ok) {
