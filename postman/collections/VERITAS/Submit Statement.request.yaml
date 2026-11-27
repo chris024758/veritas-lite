@@ -1,0 +1,12 @@
+$kind: http-request
+description: ""
+url: http://127.0.0.1:8018/sessions/1/statements
+method: POST
+body:
+  type: json
+  content: "{\r
+
+    \  \"text\": \"I arrived at the shop at 9:40 PM.\"\r
+
+    }\r\n"
+order: 3000
