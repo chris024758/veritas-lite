@@ -1,6 +1,7 @@
 import { useState } from "react";
 import EvidenceCard from "./EvidenceCard.jsx";
 import EvidenceModal from "./EvidenceModal.jsx";
+import Transcripts from "./Transcripts.jsx";
 import VeritasLoader from "./VeritasLoader.jsx";
 
 const label = (evidenceType) => evidenceType.replaceAll("_", " ");
@@ -63,6 +64,7 @@ export default function CaseFile({ caseData, error, findings, onStartInterview, 
               ))}
             </div>
           )}
+          <Transcripts key={caseData.id} caseId={caseData.id} />
         </section>
 
         <section className="panel">

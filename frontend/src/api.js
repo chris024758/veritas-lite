@@ -41,10 +41,16 @@ export const updateSubject = (subjectId, changes) => sendJson("PATCH", `/subject
 export const startSession = (caseId, subjectId) =>
   postJson("/sessions/start", { case_id: caseId, subject_id: subjectId });
 
-export const submitStatement = (sessionId, text) =>
-  postJson(`/sessions/${sessionId}/statements`, { text });
+export const submitStatement = (sessionId, text, segmentId, requestId) =>
+  postJson(`/sessions/${sessionId}/statements`, {
+    text, transcript_segment_id: segmentId, request_id: requestId,
+  });
 
-// Speech-to-text only: the text comes back for review and nothing is checked yet.
+export const listTranscripts = (caseId) => request(`/cases/${caseId}/transcripts`);
+
+export const getTranscript = (caseId, sessionId) => request(`/cases/${caseId}/transcripts/${sessionId}`);
+
+// Speech-to-text saves the original text and returns it for review.
 export function transcribe(sessionId, blob) {
   const form = new FormData();
   form.append("audio", blob, "clip.webm");

@@ -126,14 +126,14 @@ function Workspace() {
     if (subject) choosePerson(subject);
   }
 
-  async function send(text) {
-    setBusy({ stages: STAGES, stage: 0, text });
+  async function send(text, segmentId, requestId) {
+    setBusy({ stages: STAGES, stage: 0, text: text.trim() });
     setError(null);
     stageTimer.current = setInterval(() => {
       setBusy((b) => (b && b.stage < b.stages.length - 1 ? { ...b, stage: b.stage + 1 } : b));
     }, 1400);
     try {
-      const result = await submitStatement(active.sessionId, text);
+      const result = await submitStatement(active.sessionId, text, segmentId, requestId);
       setInterview((iv) => ({ ...iv, statements: [...iv.statements, { ...result, asked: asking }] }));
       setFreshFindingIds((result.alibi_findings ?? []).map((f) => f.id));
       setAsking(null);
