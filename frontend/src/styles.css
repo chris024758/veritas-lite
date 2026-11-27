@@ -332,17 +332,13 @@ mark.said-clash { background: none; color: inherit; text-decoration: underline 2
 .maps-panel .eyebrow { margin: 0; }
 .map-verdict { font-size: 11px; font-weight: 700; color: var(--text); }
 .map-verdict.bad { color: var(--alert); }
-.map-svg { display: block; width: 100%; height: auto; margin: 8px 0; }
-.map-bg { fill: #232842; }
-.map-road { fill: none; stroke: #3a3f63; stroke-width: 3; }
-.map-river { fill: none; stroke: #39466e; stroke-width: 7; opacity: 0.8; }
-.map-route { fill: none; stroke: #ffffff; stroke-width: 3.5; stroke-linecap: round; stroke-dasharray: 600; stroke-dashoffset: 600; animation: draw 1.2s ease-out forwards; }
+.map-view { width: 100%; aspect-ratio: 320 / 150; min-height: 130px; margin: 8px 0; border-radius: 10px; overflow: hidden; isolation: isolate; background: #232842; }
+.map-unavailable { display: grid; place-items: center; text-align: center; padding: 12px; }
+.map-view .leaflet-tile-pane { filter: brightness(0.62) saturate(0.7); }
+.map-route { fill: none; stroke: #ffffff; stroke-width: 3.5; stroke-opacity: 1; }
 .flagged .map-route { stroke: var(--alert); }
-@keyframes draw { to { stroke-dashoffset: 0; } }
-.map-pin { stroke: var(--bg); stroke-width: 3; fill: #ffffff; }
+.map-pin { stroke: var(--bg); stroke-width: 2; stroke-opacity: 1; fill: #ffffff; fill-opacity: 1; }
 .flagged .map-pin.end { fill: var(--alert); }
-.map-svg text { fill: var(--text-muted); font: 700 10px var(--mono); }
-.map-svg .map-note { fill: var(--muted); font-weight: 400; font-size: 9px; }
 .map-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; margin: 0 0 6px; font-size: 12px; }
 .map-facts div { display: flex; gap: 6px; min-width: 0; }
 .map-facts dt { flex: none; color: var(--muted); }
