@@ -66,7 +66,7 @@ function Illustrations({ statements, onChange }) {
   );
 }
 
-export default function SidePanel({ statements, attachments = [], sessionId, freshFindingIds, onPickQuestion, onJump, onIllustrationChanged }) {
+export default function SidePanel({ statements, attachments = [], sessionId, freshFindingIds, onPickQuestion, questionDisabled, onJump, onIllustrationChanged }) {
   const [highlighted, setHighlighted] = useState([]);
   const latest = statements[statements.length - 1];
   const findings = statements.flatMap((s) => s.alibi_findings ?? []);
@@ -104,7 +104,8 @@ export default function SidePanel({ statements, attachments = [], sessionId, fre
       </div>
       <AlibiBanner findings={latest?.alibi_findings ?? []} pulseKey={latest?.id} />
       <Illustrations statements={statements} onChange={onIllustrationChanged} />
-      <FollowUps questions={latest?.followups} error={latest?.followup_error} onPick={onPickQuestion} onHover={setHighlighted} />
+      <FollowUps questions={latest?.followups} error={latest?.followup_error} onPick={onPickQuestion}
+        disabled={questionDisabled} onHover={setHighlighted} />
 
       {imageFindings}
       <AddedRecords statements={statements} attachments={attachments} />

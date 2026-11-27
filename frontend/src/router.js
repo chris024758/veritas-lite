@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 
-// #/cases · #/case/:id · #/case/:id/interview · #/case/:id/timeline
+// #/cases · #/case/:id · #/case/:id/interview · #/case/:id/timeline · #/case/:id/transcripts
 export function parseRoute(hash) {
   const parts = hash.replace(/^#\/?/, "").split("/").filter(Boolean).map(decodeURIComponent);
   if (parts[0] === "case" && parts[1]) {
-    const view = ["interview", "timeline"].includes(parts[2]) ? parts[2] : "file";
+    const view = ["interview", "timeline", "transcripts"].includes(parts[2]) ? parts[2] : "file";
     return { name: "case", caseId: parts[1], view };
   }
   return { name: "cases" };

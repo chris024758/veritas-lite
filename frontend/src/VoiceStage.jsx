@@ -87,11 +87,13 @@ function Attachment({ a, checkingId, uploading, onCheck }) {
   );
 }
 
-export default function VoiceStage({ subject, sessionId, statements, attachments = [], onAttached, asking, onClearAsking, onSend, busy, ended, onReport, reportReady }) {
+export default function VoiceStage({ subject, sessionId, statements, attachments = [], onAttached, asking, onClearAsking,
+  onAsk, questionPending, onAnswerInProgress, onSend, busy, ended, onReport, reportReady }) {
   const [state, setState] = useState("ready"); // ready | listening | transcribing
   const [level, setLevel] = useState(0);
   const [caption, setCaption] = useState("");
-  const [draft, setDraft] = useState(null); // null = no draft; string = review before Send
+  const [draft, setDraft] = useState(null); // { text, segmentId?, requestId? }
+  const [questionDraft, setQuestionDraft] = useState(null);
   const [error, setError] = useState(null);
   const [demoOpen, setDemoOpen] = useState(false);
   const [bars, setBars] = useState(() => Array(BAR_COUNT).fill(0));
@@ -103,6 +105,8 @@ export default function VoiceStage({ subject, sessionId, statements, attachments
   const endRef = useRef(null);
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" }); }, [statements.length, attachments.length, draft, busy]);
+  const answerInProgress = state !== "ready" || draft !== null;
+  useEffect(() => { onAnswerInProgress(answerInProgress); }, [answerInProgress, onAnswerInProgress]);
   useEffect(() => () => stopEverything(), []);
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
 
@@ -175,6 +179,7 @@ export default function VoiceStage({ subject, sessionId, statements, attachments
     cancelAnimationFrame(m.raf);
     m.stream?.getTracks().forEach((t) => t.stop());
     m.audio?.close?.();
+    media.current = {};
     setLevel(0);
     setBars(Array(BAR_COUNT).fill(0));
     setState("transcribing");
@@ -182,9 +187,9 @@ export default function VoiceStage({ subject, sessionId, statements, attachments
 
   async function handleClip(blob) {
     try {
-      const { transcript } = await transcribe(sessionId, blob);
+      const { transcript, transcript_segment_id } = await transcribe(sessionId, blob);
       if (!transcript) setError("No speech detected in that clip.");
-      else setDraft(transcript);
+      else setDraft({ text: transcript, segmentId: transcript_segment_id });
     } catch (e) {
       setError(e.message);
     } finally {
@@ -194,11 +199,13 @@ export default function VoiceStage({ subject, sessionId, statements, attachments
   }
 
   async function send() {
-    const text = draft.trim();
-    if (!text) return;
+    if (!draft.text.trim()) return;
+    const submitted = draft.segmentId || draft.requestId
+      ? draft
+      : { ...draft, requestId: crypto.randomUUID?.() };
     setDraft(null); // the turn shows above while it's checked
-    const ok = await onSend(text);
-    if (!ok) setDraft(text);
+    const ok = await onSend(submitted.text, submitted.segmentId, submitted.requestId);
+    if (!ok) setDraft(submitted);
   }
 
   function pickImage(e) {
@@ -244,7 +251,7 @@ export default function VoiceStage({ subject, sessionId, statements, attachments
       onCheck={checkAttachment} />
   ));
 
-  const canTalk = !ended && !busy && draft === null && state !== "transcribing";
+  const canTalk = !ended && !busy && !questionPending && questionDraft === null && draft === null && state === "ready";
 
   return (
     <section className="voice-stage">
@@ -294,18 +301,36 @@ export default function VoiceStage({ subject, sessionId, statements, attachments
             <span className="draft-tag">Not sent yet</span>
             <span className="muted small">Check the words, fix any mistakes, then send it to be checked.</span>
           </div>
-          <textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={3} aria-label="Statement to send" autoFocus />
+          <textarea value={draft.text}
+            onChange={(e) => setDraft({ ...draft, text: e.target.value, requestId: undefined })}
+            rows={3} aria-label="Statement to send" autoFocus />
           <div className="actions">
-            <button type="button" className="primary" onClick={send} disabled={!draft.trim() || !!busy}>Send</button>
-            <button type="button" className="secondary" onClick={() => setDraft(null)} disabled={!!busy}>Discard</button>
+            <button type="button" className="primary" onClick={send} disabled={!draft.text.trim() || !!busy}>Send</button>
+            <button type="button" className="secondary" onClick={() => setDraft(null)} disabled={!!busy}>Discard draft</button>
           </div>
+          {(draft.segmentId || draft.requestId) && <p className="muted small">Discarding the draft keeps any text already saved in the interview transcript.</p>}
         </div>
       ) : (
         <div className="stage-controls">
           {asking && (
             <p className="asking"><span>Asking</span>{asking}
-              <button type="button" className="icon-btn" onClick={onClearAsking} aria-label="Clear question">×</button>
+              <button type="button" className="icon-btn" onClick={onClearAsking} aria-label="Dismiss question"
+                title="The question stays in the transcript">×</button>
             </p>
+          )}
+          {questionDraft !== null && (
+            <form className="interviewer-question" onSubmit={async (event) => {
+              event.preventDefault();
+              if (await onAsk(questionDraft)) setQuestionDraft(null);
+            }}>
+              <label htmlFor="interviewer-question">Interviewer question</label>
+              <textarea id="interviewer-question" rows={2} value={questionDraft}
+                onChange={(event) => setQuestionDraft(event.target.value)} disabled={questionPending} autoFocus />
+              <div className="actions">
+                <button type="submit" className="primary" disabled={questionPending || !questionDraft.trim()}>Ask question</button>
+                <button type="button" className="secondary" disabled={questionPending} onClick={() => setQuestionDraft(null)}>Cancel</button>
+              </div>
+            </form>
           )}
           {pendingImage && (
             <div className="image-pending">
@@ -349,14 +374,15 @@ export default function VoiceStage({ subject, sessionId, statements, attachments
           )}
           {state === "transcribing" && <VeritasLoader size={0.3} label="Converting speech to text" />}
           <div className="stage-links">
-            <button type="button" className="link-btn" onClick={() => setDraft("")} disabled={!canTalk}>Type instead</button>
+            <button type="button" className="link-btn" onClick={() => setQuestionDraft("")} disabled={!canTalk}>Add question</button>
+            <button type="button" className="link-btn" onClick={() => setDraft({ text: "" })} disabled={!canTalk}>Type instead</button>
             <div className="demo-menu">
               <button type="button" className="link-btn" onClick={() => setDemoOpen((o) => !o)} disabled={!canTalk} aria-expanded={demoOpen}>Demo script</button>
               {demoOpen && (
                 <ul className="demo-list glass">
                   {DEMO_SCRIPT.map((t) => (
                     <li key={t.label}>
-                      <button type="button" onClick={() => { setDraft(t.text); setDemoOpen(false); }}>
+                      <button type="button" onClick={() => { setDraft({ text: t.text }); setDemoOpen(false); }}>
                         <b>{t.label}</b><span>{t.text}</span>
                       </button>
                     </li>

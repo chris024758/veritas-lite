@@ -175,6 +175,24 @@ textarea { resize: vertical; line-height: 21px; }
 .section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
 .section-head h2 { font-size: 15px; }
 .empty-note { padding: 18px; border: 1px dashed var(--line-strong); border-radius: 12px; text-align: center; }
+.transcript-page { max-width: 760px; }
+.transcript-page h1 { font-size: 24px; }
+.transcript-list, .transcript-entries { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.transcript-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%;
+  padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px;
+  color: var(--text); background: var(--surface-sunk); text-align: left;
+}
+.transcript-row:hover, .transcript-row:focus-visible { border-color: var(--line-strong); background: var(--surface-2); }
+.transcript-row > span:first-child { display: grid; gap: 2px; }
+.transcript-row > span:last-child { flex-shrink: 0; }
+.transcript-dialog {
+  box-sizing: border-box; width: min(680px, calc(100% - 32px)); max-height: calc(100dvh - 32px); margin: auto;
+  padding: 22px; color: var(--text); background: var(--surface); border: 1px solid var(--line-strong); border-radius: 16px;
+}
+.transcript-dialog::backdrop { background: rgba(14, 17, 30, 0.65); backdrop-filter: blur(6px); }
+.transcript-entries li { padding: 12px 0; border-top: 1px solid var(--line); }
+.transcript-entries p { margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; }
 .people-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
 .person-row { display: flex; align-items: center; gap: 12px; padding: 10px; border-radius: 12px; background: var(--surface-sunk); }
 .person-info { flex: 1; min-width: 0; display: grid; gap: 2px; }
@@ -278,6 +296,8 @@ mark.said-clash { background: none; color: inherit; text-decoration: underline 2
 .stage-state { color: var(--text-muted); font-size: 13px; }
 .caption { max-width: 620px; min-height: 26px; color: var(--text); font-size: 17px; line-height: 26px; text-align: center; opacity: 0.85; }
 .stage-links { display: flex; gap: 18px; }
+.interviewer-question { display: grid; gap: 8px; width: min(100%, 440px); }
+.interviewer-question label { font-weight: 600; }
 .demo-menu { position: relative; }
 .demo-list {
   position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%); z-index: 20;
@@ -462,6 +482,12 @@ mark.clash { padding: 0 3px; border-radius: 4px; background: var(--alert); color
 .ecard-title { font-size: 12px; font-weight: 700; line-height: 15px; text-transform: capitalize; }
 .ecard-sub { color: var(--text-muted); font: 500 10px var(--mono); }
 .ecard-flag { position: absolute; top: 10px; left: 10px; display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--alert); color: var(--alert-ink); font-weight: 800; font-size: 12px; }
+.transcript-tile { display: block; text-decoration: none; }
+.transcript-tile-arrow { position: absolute; top: 10px; right: 14px; font-size: 17px; color: var(--text-muted); }
+.ecard.transcript-tile:hover .ecard-logo, .ecard.transcript-tile:focus-within .ecard-logo {
+  transform: translate(50%, 50%); bottom: 50%; right: 50%; width: 85%; justify-items: center; text-align: center;
+}
+.ecard.transcript-tile:hover .ecard-sub, .ecard.transcript-tile:focus-within .ecard-sub { display: block; }
 .ebox {
   position: absolute; padding: 10px; text-align: right;
   background: rgba(255, 255, 255, 0.16); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);

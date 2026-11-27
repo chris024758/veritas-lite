@@ -124,6 +124,12 @@ class StartSession(BaseModel):
 
 class SubmitStatement(BaseModel):
     text: str
+    transcript_segment_id: int | None = None
+    request_id: uuid.UUID | None = None
+
+
+class InterviewQuestion(BaseModel):
+    text: str
 
 
 class NewSubject(BaseModel):
@@ -201,7 +207,7 @@ def _keep_records(verified: dict, stored: list[dict], session: dict, statement_i
     return kept
 
 
-def run_pipeline(session: dict, text: str) -> dict:
+def run_pipeline(session: dict, text: str, transcript_segment_id: int) -> dict:
     """Extract claims; then, in parallel, verify them with the tool-calling loop and run the
     alibi check against everything already on the case; then suggest follow-ups."""
     if session["ended_at"]:
@@ -214,7 +220,7 @@ def run_pipeline(session: dict, text: str) -> dict:
         raise HTTPException(502, f"claim extraction failed: {exc}")
 
     speaker = _speaker(session)
-    statement = db.add_statement(session["id"], text)
+    statement = db.add_statement(session["id"], text, transcript_segment_id)
     stored = [
         {**claim, "id": db.add_claim(statement["id"], claim["claim_type"], claim["text"], claim["entities"])}
         for claim in claims
@@ -353,34 +359,62 @@ def _transcribe_upload(audio: UploadFile) -> str:
         os.unlink(path)
 
 
-@app.post("/sessions/{session_id}/transcribe")
-def transcribe_only(session_id: int, audio: UploadFile):
-    """Speech-to-text only: nothing is stored and nothing goes to Gemini. The investigator
-    reviews the text, then sends it to /statements."""
+def _capture_audio(session_id: int, audio: UploadFile) -> tuple[dict, str, int | None]:
     session = _require_session(session_id)
     if session["ended_at"]:
         raise HTTPException(409, "this interview has ended")
-    return {"transcript": _transcribe_upload(audio)}
+    transcript = _transcribe_upload(audio)
+    if not transcript.strip():
+        return session, "", None
+    segment = db.add_transcript_segment(session_id, "recorded", transcript)
+    return session, transcript, segment["id"]
+
+
+@app.post("/sessions/{session_id}/transcribe")
+def transcribe_only(session_id: int, audio: UploadFile):
+    """Save the raw Whisper output and return it for review before analysis."""
+    _, transcript, segment_id = _capture_audio(session_id, audio)
+    return {"transcript": transcript, "transcript_segment_id": segment_id}
 
 
 @app.post("/sessions/{session_id}/statements")
 def submit_statement(session_id: int, body: SubmitStatement):
     session = _require_session(session_id)
+    if session["ended_at"]:
+        raise HTTPException(409, "this interview has ended")
     text = body.text.strip()
     if not text:
         raise HTTPException(422, "statement text is empty")
-    return run_pipeline(session, text)
+    segment_id = body.transcript_segment_id
+    if segment_id is None:
+        request_id = str(body.request_id) if body.request_id is not None else None
+        segment = db.add_transcript_segment(session_id, "typed", body.text, request_id)
+        if segment["raw_text"] != body.text:
+            raise HTTPException(409, "this request ID was already used for different text")
+        segment_id = segment["id"]
+    elif not db.recorded_segment_exists(session_id, segment_id):
+        raise HTTPException(422, "recorded transcript clip does not belong to this interview")
+    return run_pipeline(session, text, segment_id)
+
+
+@app.post("/sessions/{session_id}/questions", status_code=201)
+def save_interview_question(session_id: int, body: InterviewQuestion):
+    session = _require_session(session_id)
+    if session["ended_at"]:
+        raise HTTPException(409, "this interview has ended")
+    if not body.text.strip():
+        raise HTTPException(422, "question text is empty")
+    return db.add_transcript_segment(session_id, "typed", body.text, speaker="interviewer")
 
 
 @app.post("/sessions/{session_id}/audio")
 def submit_audio(session_id: int, audio: UploadFile):
-    session = _require_session(session_id)
-    transcript = _transcribe_upload(audio)
+    session, transcript, segment_id = _capture_audio(session_id, audio)
 
-    if not transcript:
+    if segment_id is None:
         return {"transcript": "", "claims": []}
     try:
-        return {"transcript": transcript, **run_pipeline(session, transcript)}
+        return {"transcript": transcript, **run_pipeline(session, transcript, segment_id)}
     except HTTPException as exc:
         raise HTTPException(exc.status_code, f"{exc.detail} (transcript: {transcript})")
 
@@ -399,6 +433,19 @@ def get_session(session_id: int):
     if history is None:
         raise HTTPException(404, f"session {session_id} not found")
     return history
+
+
+@app.get("/cases/{case_id}/transcripts")
+def list_case_transcripts(case_id: str):
+    return db.list_transcripts(case_id)
+
+
+@app.get("/cases/{case_id}/transcripts/{session_id}")
+def get_case_transcript(case_id: str, session_id: int):
+    entries = db.get_transcript(case_id, session_id)
+    if not entries:
+        raise HTTPException(404, "no transcript for this interview")
+    return {"session_id": session_id, "entries": entries}
 
 
 @app.get("/cases/{case_id}/timeline")

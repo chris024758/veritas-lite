@@ -36,12 +36,25 @@ CREATE TABLE IF NOT EXISTS sessions (
     ended_at TEXT,
     report_json TEXT
 );
+CREATE TABLE IF NOT EXISTS transcript_segments (
+    id INTEGER PRIMARY KEY,
+    session_id INTEGER NOT NULL REFERENCES sessions(id),
+    sequence_no INTEGER NOT NULL CHECK (sequence_no > 0),
+    source TEXT NOT NULL CHECK (source IN ('recorded', 'typed')),
+    speaker TEXT NOT NULL DEFAULT 'interviewee' CHECK (speaker IN ('interviewee', 'interviewer')),
+    raw_text TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    request_id TEXT,
+    UNIQUE (session_id, sequence_no),
+    UNIQUE (session_id, request_id)
+);
 CREATE TABLE IF NOT EXISTS statements (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id INTEGER NOT NULL REFERENCES sessions(id),
     turn_index INTEGER NOT NULL,
     text TEXT NOT NULL,
-    followups_json TEXT NOT NULL DEFAULT '[]'
+    followups_json TEXT NOT NULL DEFAULT '[]',
+    transcript_segment_id INTEGER REFERENCES transcript_segments(id)
 );
 CREATE TABLE IF NOT EXISTS claims (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -138,6 +151,8 @@ MIGRATIONS = [
     ("sessions", "ended_at", "TEXT"),
     ("sessions", "report_json", "TEXT"),
     ("statements", "followups_json", "TEXT NOT NULL DEFAULT '[]'"),
+    ("statements", "transcript_segment_id", "INTEGER REFERENCES transcript_segments(id)"),
+    ("transcript_segments", "speaker", "TEXT NOT NULL DEFAULT 'interviewee' CHECK (speaker IN ('interviewee', 'interviewer'))"),
     ("subjects", "phone", "TEXT"),
     ("subjects", "vehicle", "TEXT"),
     ("subjects", "plate", "TEXT"),
@@ -340,17 +355,68 @@ def save_report(session_id: int, report: dict) -> None:
         conn.execute("UPDATE sessions SET report_json = ? WHERE id = ?", (json.dumps(report), session_id))
 
 
-def add_statement(session_id: int, text: str) -> dict:
+def add_transcript_segment(session_id: int, source: str, text: str, request_id: str | None = None,
+                           *, speaker: str = "interviewee") -> dict:
     with connect() as conn:
-        turn = conn.execute(
-            "SELECT COALESCE(MAX(turn_index), -1) + 1 FROM statements WHERE session_id = ?",
-            (session_id,),
-        ).fetchone()[0]
+        row = conn.execute(
+            """INSERT INTO transcript_segments (session_id, sequence_no, source, speaker, raw_text, created_at, request_id)
+               SELECT ?, COALESCE(MAX(sequence_no), 0) + 1, ?, ?, ?, ?, ?
+               FROM transcript_segments WHERE session_id = ?
+               ON CONFLICT (session_id, request_id) DO NOTHING
+               RETURNING id, raw_text""",
+            (session_id, source, speaker, text, datetime.now(timezone.utc).isoformat(), request_id, session_id),
+        ).fetchone()
+        if row is None:
+            row = conn.execute(
+                "SELECT id, raw_text FROM transcript_segments WHERE session_id = ? AND request_id = ?",
+                (session_id, request_id),
+            ).fetchone()
+        return dict(row)
+
+
+def recorded_segment_exists(session_id: int, segment_id: int) -> bool:
+    with connect() as conn:
+        return conn.execute(
+            "SELECT 1 FROM transcript_segments WHERE session_id = ? AND id = ? AND source = 'recorded'",
+            (session_id, segment_id),
+        ).fetchone() is not None
+
+
+def list_transcripts(case_id: str) -> list[dict]:
+    with connect() as conn:
+        rows = conn.execute(
+            """SELECT s.id AS session_id, s.started_at, p.full_name AS subject_name, COUNT(*) AS entry_count
+               FROM sessions s
+               JOIN transcript_segments t ON t.session_id = s.id
+               LEFT JOIN subjects p ON p.id = s.subject_id
+               WHERE s.case_id = ?
+               GROUP BY s.id ORDER BY s.started_at DESC, s.id DESC""",
+            (case_id,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_transcript(case_id: str, session_id: int) -> list[dict]:
+    with connect() as conn:
+        rows = conn.execute(
+            """SELECT t.id, t.sequence_no, t.source, t.speaker, t.raw_text, t.created_at
+               FROM transcript_segments t JOIN sessions s ON s.id = t.session_id
+               WHERE s.case_id = ? AND s.id = ? ORDER BY t.sequence_no""",
+            (case_id, session_id),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def add_statement(session_id: int, text: str, transcript_segment_id: int | None = None) -> dict:
+    with connect() as conn:
         cur = conn.execute(
-            "INSERT INTO statements (session_id, turn_index, text) VALUES (?, ?, ?)",
-            (session_id, turn, text),
+            """INSERT INTO statements (session_id, turn_index, text, transcript_segment_id)
+               SELECT ?, COALESCE(MAX(turn_index), -1) + 1, ?, ?
+               FROM statements WHERE session_id = ?
+               RETURNING id, session_id, turn_index, text, transcript_segment_id""",
+            (session_id, text, transcript_segment_id, session_id),
         )
-        return {"id": cur.lastrowid, "session_id": session_id, "turn_index": turn, "text": text}
+        return dict(cur.fetchone())
 
 
 def add_claim(statement_id: int, claim_type: str, text: str, entities: dict) -> int:

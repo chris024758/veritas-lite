@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import {
-  endSession, generateReport, getCase, getTimeline, reportDocxUrl, startSession, submitStatement,
+  endSession, generateReport, getCase, getTimeline, reportDocxUrl, saveQuestion, startSession, submitStatement,
 } from "./api.js";
 import CaseDirectory from "./CaseDirectory.jsx";
 import LoginPage, { useSignIn } from "./LoginPage.jsx";
@@ -10,6 +10,7 @@ import FlagPopover, { FindingBody } from "./FlagPopover.jsx";
 import IntervieweePanel from "./IntervieweePanel.jsx";
 import ReportPanel from "./ReportView.jsx";
 import SidePanel from "./SidePanel.jsx";
+import Transcripts from "./Transcripts.jsx";
 import VeritasLoader from "./VeritasLoader.jsx";
 import VoiceStage from "./VoiceStage.jsx";
 import { casePath, navigate, parseRoute, useRoute } from "./router.js";
@@ -53,6 +54,8 @@ function Workspace() {
   const [busy, setBusy] = useState(null);
   const [error, setError] = useState(null);
   const [asking, setAsking] = useState(null);
+  const [questionPending, setQuestionPending] = useState(false);
+  const [answerInProgress, setAnswerInProgress] = useState(false);
   const [freshFindingIds, setFreshFindingIds] = useState([]);
   const [timeline, setTimeline] = useState(null);
   const [timelineError, setTimelineError] = useState(null);
@@ -96,6 +99,7 @@ function Workspace() {
       setInterview({ caseId, subject, sessionId: session_id, statements: [], attachments: [], ended: false, report: null });
       setFreshFindingIds([]);
       setAsking(null);
+      setAnswerInProgress(false);
       setSnapshot(null);
       refreshCase(caseId);
     } catch (e) {
@@ -126,14 +130,30 @@ function Workspace() {
     if (subject) choosePerson(subject);
   }
 
-  async function send(text) {
-    setBusy({ stages: STAGES, stage: 0, text });
+  async function askQuestion(text) {
+    if (!active || active.ended || busy || questionPending || answerInProgress) return false;
+    setQuestionPending(true);
+    setError(null);
+    try {
+      const question = await saveQuestion(active.sessionId, text);
+      setAsking(question.raw_text);
+      return true;
+    } catch (e) {
+      setError(e.message);
+      return false;
+    } finally {
+      setQuestionPending(false);
+    }
+  }
+
+  async function send(text, segmentId, requestId) {
+    setBusy({ stages: STAGES, stage: 0, text: text.trim() });
     setError(null);
     stageTimer.current = setInterval(() => {
       setBusy((b) => (b && b.stage < b.stages.length - 1 ? { ...b, stage: b.stage + 1 } : b));
     }, 1400);
     try {
-      const result = await submitStatement(active.sessionId, text);
+      const result = await submitStatement(active.sessionId, text, segmentId, requestId);
       setInterview((iv) => ({ ...iv, statements: [...iv.statements, { ...result, asked: asking }] }));
       setFreshFindingIds((result.alibi_findings ?? []).map((f) => f.id));
       setAsking(null);
@@ -273,6 +293,8 @@ function Workspace() {
           onShowOnTimeline={(id) => { setTimelineFocus(id); navigate(casePath(caseId, "timeline")); }} />
       )}
 
+      {caseId && route.view === "transcripts" && <Transcripts key={caseId} caseId={caseId} />}
+
       {caseId && route.view === "interview" && (
         !caseData ? <main className="page center-load">{caseError ? <p className="error">{caseError}</p> : <VeritasLoader size={0.6} />}</main> : (
           <div className={`interview-layout ${drawerOpen ? "drawer-open" : ""}`}>
@@ -283,13 +305,14 @@ function Workspace() {
             <main className="stage">
               {active && (
                 <div className="stage-head">
-                  <button type="button" className="who" onClick={() => setPickerOpen((o) => !o)} aria-expanded={pickerOpen}>
+                  <button type="button" className="who" onClick={() => setPickerOpen((o) => !o)}
+                    aria-expanded={pickerOpen} disabled={questionPending}>
                     <span className="muted">{caseData.name} ›</span> <b>{active.subject.full_name}</b>
                     <span className="tag">{active.subject.role}</span>
                     <span className={`live ${active.ended ? "ended" : "on"}`}>{active.ended ? "Ended" : "Live"}</span>
                   </button>
                   {!active.ended && (
-                    <button type="button" className="secondary" onClick={askEnd} disabled={!!busy}>End interview</button>
+                    <button type="button" className="secondary" onClick={askEnd} disabled={!!busy || questionPending}>End interview</button>
                   )}
                 </div>
               )}
@@ -312,6 +335,9 @@ function Workspace() {
                   onAttached={attached}
                   asking={asking}
                   onClearAsking={() => setAsking(null)}
+                  onAsk={askQuestion}
+                  questionPending={questionPending}
+                  onAnswerInProgress={setAnswerInProgress}
                   onSend={send}
                   busy={busy}
                   ended={active.ended}
@@ -324,7 +350,9 @@ function Workspace() {
 
             {active ? (
               <SidePanel statements={active.statements} attachments={active.attachments} sessionId={active.sessionId} freshFindingIds={freshFindingIds}
-                onPickQuestion={setAsking} onJump={jumpTo} onIllustrationChanged={illustrationChanged} />
+                onPickQuestion={askQuestion}
+                questionDisabled={active.ended || !!busy || questionPending || answerInProgress || pickerOpen}
+                onJump={jumpTo} onIllustrationChanged={illustrationChanged} />
             ) : (
               <aside className="side glass" aria-label="Findings">
                 <h2 className="side-title">Findings</h2>

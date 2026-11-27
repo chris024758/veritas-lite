@@ -18,7 +18,7 @@ export const iconFor = (item) =>
       : /cabinet/.test(item.evidence_type ?? "") ? "cabinet"
         : /claim|insurance/.test(item.evidence_type ?? "") ? "claim" : "record";
 
-function Glyph({ name, className = "" }) {
+export function Glyph({ name, className = "" }) {
   return (
     <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="1.6"
       strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

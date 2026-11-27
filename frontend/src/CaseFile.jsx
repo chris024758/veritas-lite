@@ -1,6 +1,7 @@
 import { useState } from "react";
 import EvidenceCard from "./EvidenceCard.jsx";
 import EvidenceModal from "./EvidenceModal.jsx";
+import { TranscriptTile } from "./Transcripts.jsx";
 import VeritasLoader from "./VeritasLoader.jsx";
 
 const label = (evidenceType) => evidenceType.replaceAll("_", " ");
@@ -47,22 +48,20 @@ export default function CaseFile({ caseData, error, findings, onStartInterview, 
             <h2>Evidence</h2>
             <span className="muted small">{records.length} records · click a card to open it</span>
           </div>
-          {records.length === 0 ? (
-            <p className="muted empty-note">No records on this case yet.</p>
-          ) : (
-            <div className="ecard-grid wide">
-              {records.map((item) => (
-                <EvidenceCard
-                  key={item.key}
-                  item={item}
-                  cited={item.linked.length}
-                  linkedCount={item.linked.length}
-                  active={item.key === open}
-                  onAction={(action) => (action === "timeline" ? onShowOnTimeline(item.timelineId) : setOpen(item.key))}
-                />
-              ))}
-            </div>
-          )}
+          {records.length === 0 && <p className="muted empty-note">No records on this case yet.</p>}
+          <div className="ecard-grid wide">
+            {records.map((item) => (
+              <EvidenceCard
+                key={item.key}
+                item={item}
+                cited={item.linked.length}
+                linkedCount={item.linked.length}
+                active={item.key === open}
+                onAction={(action) => (action === "timeline" ? onShowOnTimeline(item.timelineId) : setOpen(item.key))}
+              />
+            ))}
+            <TranscriptTile key={caseData.id} caseId={caseData.id} />
+          </div>
         </section>
 
         <section className="panel">
