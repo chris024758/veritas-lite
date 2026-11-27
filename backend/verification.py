@@ -226,8 +226,10 @@ def verify_statement_full(claims: list[dict], statement: str, statement_id: int,
                 output = _dispatch(call.name, args, case_id, statement_id)
                 call_id = len(tool_calls) + 1
                 tool_calls.append({"id": call_id, "name": call.name, "args": args, "result": output})
+                model_result = output.copy()
+                model_result.pop("route_geometry", None)  # The map line is only needed by the UI.
                 parts.append(types.Part.from_function_response(
-                    name=call.name, response={"call_id": call_id, "result": output}))
+                    name=call.name, response={"call_id": call_id, "result": model_result}))
             contents.append(types.Content(role="user", parts=parts))
         else:
             response = None  # ran out of rounds on a tool call: ask for the verdicts below

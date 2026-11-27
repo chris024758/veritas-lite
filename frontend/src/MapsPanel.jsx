@@ -1,30 +1,63 @@
-// Maps check. The map is a placeholder SVG for now; the numbers are the real route check.
-// A later version swaps the SVG for Google Maps and keeps this panel's data.
+import { useEffect, useRef } from "react";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
+
+function RouteMap({ geometry, label }) {
+  const container = useRef(null);
+
+  useEffect(() => {
+    const map = L.map(container.current, { scrollWheelZoom: false });
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19,
+      attribution: '<a href="https://www.openstreetmap.org/copyright">© OpenStreetMap contributors</a>',
+    }).addTo(map);
+    const route = L.geoJSON(geometry, { style: { className: "map-route", interactive: false } });
+    map.fitBounds(route.getBounds(), { padding: [34, 34], maxZoom: 16 });
+    route.addTo(map);
+    const [start, end] = [geometry.coordinates[0], geometry.coordinates.at(-1)];
+    for (const [point, marker, kind, direction] of [[start, "A", "start", "left"], [end, "B", "end", "right"]]) {
+      L.circleMarker(L.GeoJSON.coordsToLatLng(point), { radius: 5, className: `map-pin ${kind}` })
+        .addTo(map)
+        .bindTooltip(marker, { permanent: true, direction, offset: [direction === "left" ? -6 : 6, 0] });
+    }
+
+    const resize = new ResizeObserver(() => map.invalidateSize({ pan: false }));
+    resize.observe(container.current);
+    return () => {
+      resize.disconnect();
+      map.remove();
+    };
+  }, [geometry]);
+
+  return <div ref={container} className="map-view" role="region" aria-label={label} />;
+}
+
 export default function MapsPanel({ result, claimText, fresh }) {
   const flagged = result.exceeds_tolerance;
+  const fallback = result.source === "straight_line_fallback";
+  const hasClaimedTime = result.claimed_minutes !== undefined;
+  const verdict = fallback ? "Estimate only" : !hasClaimedTime ? "Route estimate" :
+    flagged ? "Not possible in claimed time" : "Plausible";
   return (
     <article className={`maps-panel ${flagged ? "flagged" : ""} ${fresh ? "fresh" : ""}`}>
       <header>
         <span className="eyebrow">Maps check</span>
-        <span className={`map-verdict ${flagged ? "bad" : ""}`}>{flagged ? "Not possible in claimed time" : "Plausible"}</span>
+        <span className={`map-verdict ${flagged && !fallback ? "bad" : ""}`}>{verdict}</span>
       </header>
-      <svg viewBox="0 0 320 150" className="map-svg" role="img"
-        aria-label={`Route from ${result.origin} to ${result.destination}, ${result.distance_km} km`}>
-        <rect width="320" height="150" rx="10" className="map-bg" />
-        {[30, 70, 110].map((y) => <path key={y} d={`M0 ${y} Q 160 ${y + 14} 320 ${y - 6}`} className="map-road" />)}
-        {[60, 150, 250].map((x) => <path key={x} d={`M${x} 0 Q ${x + 12} 75 ${x - 8} 150`} className="map-road" />)}
-        <path d="M0 128 C 90 118 170 140 320 120" className="map-river" />
-        <path d="M54 104 C 110 30, 200 130, 266 46" className="map-route" />
-        <g transform="translate(54 104)"><circle r="7" className="map-pin start" /><text y="22" textAnchor="middle">A</text></g>
-        <g transform="translate(266 46)"><circle r="7" className="map-pin end" /><text y="-12" textAnchor="middle">B</text></g>
-        <text x="310" y="142" textAnchor="end" className="map-note">illustrative map</text>
-      </svg>
+      {result.route_geometry ? (
+        <RouteMap geometry={result.route_geometry}
+          label={`Route from ${result.origin} to ${result.destination}, ${result.distance_km} km`} />
+      ) : (
+        <div className="map-view map-unavailable muted small">
+          {fallback ? "Road route unavailable. Showing a straight-line estimate." : "Route map unavailable for this check."}
+        </div>
+      )}
       <dl className="map-facts">
         <div className="span-2"><dt>A</dt><dd>{result.origin_matched || result.origin}</dd></div>
         <div className="span-2"><dt>B</dt><dd>{result.destination_matched || result.destination}</dd></div>
         <div><dt>Distance</dt><dd>{result.distance_km} km</dd></div>
-        <div><dt>Actual</dt><dd>{result.actual_minutes} min</dd></div>
-        {result.claimed_minutes !== undefined && <div><dt>Claimed</dt><dd>{result.claimed_minutes} min</dd></div>}
+        <div><dt>Estimated</dt><dd>{result.actual_minutes} min</dd></div>
+        {hasClaimedTime && <div><dt>Claimed</dt><dd>{result.claimed_minutes} min</dd></div>}
         {result.gap_minutes !== undefined && (
           <div><dt>Gap</dt><dd className={flagged ? "bad" : ""}>{result.gap_minutes > 0 ? "+" : ""}{result.gap_minutes} min</dd></div>
         )}

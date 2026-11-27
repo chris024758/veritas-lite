@@ -82,21 +82,30 @@ def _route(a: dict, b: dict) -> dict:
     """Distance and raw duration: cache, then live OSRM, then straight-line fallback."""
     key = f"route:{a['lon']},{a['lat']};{b['lon']},{b['lat']}"
     cached = db.cache_get(key)
-    if cached:
+    if cached and cached.get("route_geometry"):
         return {**cached, "source": "osrm_cached"}
     try:
         response = requests.get(
             OSRM_URL.format(a=f"{a['lon']},{a['lat']}", b=f"{b['lon']},{b['lat']}"),
-            params={"overview": "false"},
+            params={"overview": "simplified", "geometries": "geojson", "generate_hints": "false"},
             headers=HEADERS,
             timeout=TIMEOUT_SECONDS,
         )
         response.raise_for_status()
         route = response.json()["routes"][0]
-        result = {"distance_km": route["distance"] / 1000, "osrm_minutes": route["duration"] / 60}
+        geometry = route["geometry"]
+        if geometry["type"] != "LineString" or len(geometry["coordinates"]) < 2:
+            raise ValueError("OSRM returned no route line")
+        result = {
+            "distance_km": route["distance"] / 1000,
+            "osrm_minutes": route["duration"] / 60,
+            "route_geometry": geometry,
+        }
         db.cache_set(key, result)
         return {**result, "source": "osrm"}
-    except (requests.RequestException, KeyError, IndexError, ValueError):
+    except (requests.RequestException, KeyError, IndexError, TypeError, ValueError):
+        if cached:
+            return {**cached, "source": "osrm_cached"}
         return {"distance_km": _haversine_km(a, b), "osrm_minutes": None, "source": "straight_line_fallback"}
 
 
@@ -124,6 +133,8 @@ def check_route(origin: str, destination: str, claimed_minutes: float | None = N
         "actual_minutes": round(actual, 1),
         "source": route["source"],
     }
+    if "route_geometry" in route:
+        result["route_geometry"] = route["route_geometry"]
     if claimed_minutes is not None:
         gap = actual - claimed_minutes
         result["claimed_minutes"] = claimed_minutes
