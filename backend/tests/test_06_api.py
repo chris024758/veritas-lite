@@ -1,17 +1,13 @@
 """Every endpoint and pipeline branch over real HTTP. Needs run_fake_stack.py running.
-Usage: test_06_api.py <spoken_clip.wav>. Gemini and Cloudflare responses are scripted."""
+Usage: test_06_api.py <spoken_clip.wav>. Gemini's decisions are SCRIPTED; everything else is real."""
 import json
 import sys
 import time
 
 import requests
 
-from auth_test_helpers import sign_in
-
 sys.stdout.reconfigure(encoding="utf-8")
 API = "http://localhost:8018"
-client = requests.Session()
-sign_in(client, API)
 FAKE = "http://127.0.0.1:8019"
 CASE = "2026-PUN-0219"
 ALIBI = ("I was at my cousin's housewarming in Hadapsar. Left around 9, rode to the shop to check "
@@ -30,11 +26,11 @@ def check(label, condition, detail=""):
 
 
 def post_statement(session, text):
-    return client.post(f"{API}/sessions/{session}/statements", json={"text": text}, timeout=120)
+    return requests.post(f"{API}/sessions/{session}/statements", json={"text": text}, timeout=120)
 
 
 def start(subject="Suresh Deshmukh"):
-    r = client.post(f"{API}/sessions/start", json={"case_id": CASE, "subject_name": subject})
+    r = requests.post(f"{API}/sessions/start", json={"case_id": CASE, "subject_name": subject})
     return r.json()["session_id"]
 
 
@@ -43,20 +39,20 @@ def tools_used(claim):
 
 
 # GET /cases/{id}
-r = client.get(f"{API}/cases/{CASE}")
+r = requests.get(f"{API}/cases/{CASE}")
 body = r.json()
 check("GET case 200", r.status_code == 200)
 check("case has 2 subjects, 4 evidence", len(body["subjects"]) == 2 and len(body["evidence"]) == 4)
-check("GET unknown case 404", client.get(f"{API}/cases/NOPE").status_code == 404)
+check("GET unknown case 404", requests.get(f"{API}/cases/NOPE").status_code == 404)
 
 # POST /sessions/start
-r = client.post(f"{API}/sessions/start", json={"case_id": CASE, "subject_name": "Suresh Deshmukh"})
+r = requests.post(f"{API}/sessions/start", json={"case_id": CASE, "subject_name": "Suresh Deshmukh"})
 session = r.json()["session_id"]
 check("start session returns id", r.status_code == 200 and isinstance(session, int), f"session {session}")
-check("start unknown case 404", client.post(f"{API}/sessions/start", json={"case_id": "X", "subject_name": "y"}).status_code == 404)
-check("start missing field 422", client.post(f"{API}/sessions/start", json={"case_id": CASE}).status_code == 422)
+check("start unknown case 404", requests.post(f"{API}/sessions/start", json={"case_id": "X", "subject_name": "y"}).status_code == 404)
+check("start missing field 422", requests.post(f"{API}/sessions/start", json={"case_id": CASE}).status_code == 422)
 other = start("Nobody On File")
-check("unknown subject session has no subject", client.get(f"{API}/sessions/{other}").json()["subject_id"] is None)
+check("unknown subject session has no subject", requests.get(f"{API}/sessions/{other}").json()["subject_id"] is None)
 
 # POST /sessions/{id}/statements: the alibi
 before_calls = len(requests.get(f"{FAKE}/_requests").json())
@@ -102,19 +98,19 @@ for text in ("I don't remember.", "I do not remember anything."):
 
 # Bad input
 check("blank text 422", post_statement(session, "   ").status_code == 422)
-check("missing text 422", client.post(f"{API}/sessions/{session}/statements", json={}).status_code == 422)
-check("non-JSON body 422", client.post(f"{API}/sessions/{session}/statements", data="x", headers={"Content-Type": "application/json"}).status_code == 422)
+check("missing text 422", requests.post(f"{API}/sessions/{session}/statements", json={}).status_code == 422)
+check("non-JSON body 422", requests.post(f"{API}/sessions/{session}/statements", data="x", headers={"Content-Type": "application/json"}).status_code == 422)
 check("unknown session 404", post_statement(999999, "x").status_code == 404)
 big = post_statement(session, "Unicode ₹ मराठी 'quotes\"; DROP TABLE claims;-- %_")
-check("SQL-looking and Unicode text is safe", big.status_code == 200 and client.get(f"{API}/cases/{CASE}").status_code == 200)
+check("SQL-looking and Unicode text is safe", big.status_code == 200 and requests.get(f"{API}/cases/{CASE}").status_code == 200)
 
 # Failure paths: no crash, sensible status, nothing half-written
-before = len(client.get(f"{API}/sessions/{session}").json()["statements"])
+before = len(requests.get(f"{API}/sessions/{session}").json()["statements"])
 r = post_statement(session, "TRIGGER_EXTRACT_400")
 check("Gemini 400 on extraction gives 502", r.status_code == 502, r.json()["detail"][:70])
 r = post_statement(session, "TRIGGER_MALFORMED")
 check("malformed extraction JSON gives 502", r.status_code == 502, r.json()["detail"][:70])
-check("failed extraction stores no statement", len(client.get(f"{API}/sessions/{session}").json()["statements"]) == before)
+check("failed extraction stores no statement", len(requests.get(f"{API}/sessions/{session}").json()["statements"]) == before)
 
 t = time.time()
 r = post_statement(session, "TRIGGER_429 second attempt succeeds")
@@ -140,22 +136,22 @@ check("search sees the prior turn but not the current one", len(result["prior_st
 # POST /sessions/{id}/audio
 clip = sys.argv[1]
 with open(clip, "rb") as f:
-    r = client.post(f"{API}/sessions/{session}/audio", files={"audio": ("clip.wav", f)}, timeout=180)
+    r = requests.post(f"{API}/sessions/{session}/audio", files={"audio": ("clip.wav", f)}, timeout=180)
 body = r.json()
 check("audio returns transcript and claims", r.status_code == 200 and "housewarming" in body["transcript"].lower() and body["claims"], body["transcript"][:70])
 print("     audio claim statuses:", [c["status"] for c in body["claims"]])
-r = client.post(f"{API}/sessions/{session}/audio", files={"audio": ("bad.wav", b"not audio")})
+r = requests.post(f"{API}/sessions/{session}/audio", files={"audio": ("bad.wav", b"not audio")})
 check("undecodable audio 400", r.status_code == 400)
-check("missing audio file 422", client.post(f"{API}/sessions/{session}/audio").status_code == 422)
+check("missing audio file 422", requests.post(f"{API}/sessions/{session}/audio").status_code == 422)
 with open(clip, "rb") as f:
-    check("audio on unknown session 404", client.post(f"{API}/sessions/999999/audio", files={"audio": ("c.wav", f)}).status_code == 404)
+    check("audio on unknown session 404", requests.post(f"{API}/sessions/999999/audio", files={"audio": ("c.wav", f)}).status_code == 404)
 
 # GET /sessions/{id}
-history = client.get(f"{API}/sessions/{session}").json()
+history = requests.get(f"{API}/sessions/{session}").json()
 turns = [s["turn_index"] for s in history["statements"]]
 check("history turn numbers are sequential", turns == list(range(len(turns))), f"{len(turns)} turns")
 check("history includes claims with status", history["statements"][0]["claims"][0]["status"] in ("CONSISTENT", "FLAGGED", "CONFLICT", "PENDING"))
-check("GET unknown session 404", client.get(f"{API}/sessions/999999").status_code == 404)
+check("GET unknown session 404", requests.get(f"{API}/sessions/999999").status_code == 404)
 
 # What the real SDK actually sent
 seen = requests.get(f"{FAKE}/_requests").json()

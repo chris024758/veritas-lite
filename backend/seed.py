@@ -2,13 +2,6 @@
 import json
 
 import db
-from security import DEMO_USERNAME
-
-# The shared demo credential is stored in the same salted format as other accounts.
-DEMO_PASSWORD_HASH = (
-    "a1562b48d4e9da808d4936952cb00e2c:0e9aa8a172e7a37f786c4303e4e46b3b968883b3a0e7e2e5baff8fe658e21b9df"
-    "6fbdb28214d88f5612f8d814da7e317a10f846115e6eb9dbc27e3b38a99d88a"
-)
 
 CASE_ID = "2026-PUN-0219"
 
@@ -125,41 +118,15 @@ OTHER_CASES = [
 SURESH_VEHICLE = {"vehicle": "white Honda Activa", "plate": "MH12 AB 4521", "relation": "Shop owner"}
 
 
-def _upsert_case(conn, case: dict, subjects: list, evidence: list) -> None:
-    case_id = case["id"]
-    existing = conn.execute("SELECT name, owner FROM cases WHERE id = ?", (case_id,)).fetchone()
-    if existing and existing["owner"] != DEMO_USERNAME:
-        people = conn.execute("SELECT * FROM subjects WHERE case_id = ?", (case_id,)).fetchall()
-        expected_people = {person["full_name"]: person for person in subjects}
-        records = conn.execute("SELECT * FROM evidence WHERE case_id = ?", (case_id,)).fetchall()
-        expected_records = {item["evidence_type"]: item for item in evidence}
-        interviews = conn.execute("SELECT 1 FROM sessions WHERE case_id = ? LIMIT 1", (case_id,)).fetchone()
-        conflict = ValueError(f"Case {case_id} may contain private records. Seed into a separate database.")
-        if existing["owner"] is not None or existing["name"] != case["name"] or interviews:
-            raise conflict
-        for person in people:
-            expected = expected_people.get(person["full_name"])
-            vehicle = SURESH_VEHICLE if person["full_name"] == "Suresh Deshmukh" and case_id == CASE_ID else {}
-            if (expected is None or person["phone"] or person["nicknames"] != expected["nicknames"]
-                    or person["notes"] != expected["notes"]
-                    or any(person[field] not in (None, "", vehicle.get(field)) for field in ("vehicle", "plate", "relation"))):
-                raise conflict
-        for record in records:
-            expected = expected_records.get(record["evidence_type"])
-            if (expected is None or record["source"] != "seed" or record["description"] != expected["description"]
-                    or json.loads(record["metadata_json"]) != expected["metadata"]
-                    or record["image"] not in (None, EVIDENCE_IMAGES.get(record["evidence_type"]))):
-                raise conflict
-
+def _upsert_case(conn, case: dict) -> None:
     conn.execute(
-        "INSERT INTO cases (id, name, location, summary, incident_start, incident_end, incident_date, status, owner) "
-        "VALUES (:id, :name, :location, :summary, :incident_start, :incident_end, :incident_date, :status, :owner) "
+        "INSERT INTO cases (id, name, location, summary, incident_start, incident_end, incident_date, status) "
+        "VALUES (:id, :name, :location, :summary, :incident_start, :incident_end, :incident_date, :status) "
         "ON CONFLICT(id) DO UPDATE SET name = excluded.name, location = excluded.location, "
         "summary = excluded.summary, incident_start = excluded.incident_start, "
-        "incident_end = excluded.incident_end, incident_date = excluded.incident_date, owner = excluded.owner",
-        {"status": "Open", "incident_date": None, **case, "owner": DEMO_USERNAME},
+        "incident_end = excluded.incident_end, incident_date = excluded.incident_date",
+        {"status": "Open", "incident_date": None, **case},
     )
-    _add_people_and_evidence(conn, case_id, subjects, evidence)
 
 
 def _add_people_and_evidence(conn, case_id: str, subjects: list, evidence: list) -> None:
@@ -201,9 +168,9 @@ def seed() -> None:
     """The demo starts with no interviews. The street cleaner is not seeded: he is added live."""
     db.init_db()
     with db.connect() as conn:
-        conn.execute("INSERT OR IGNORE INTO accounts VALUES (?, ?)", (DEMO_USERNAME, DEMO_PASSWORD_HASH))
         # Upsert, not REPLACE: replacing the row would break the sessions that reference it.
-        _upsert_case(conn, {**CASE, **INCIDENT}, SUBJECTS, EVIDENCE)
+        _upsert_case(conn, {**CASE, **INCIDENT})
+        _add_people_and_evidence(conn, CASE_ID, SUBJECTS, EVIDENCE)
         for subject in SUBJECTS:  # keep seeded people current on an existing database
             conn.execute(
                 "UPDATE subjects SET role = :role, notes = :notes WHERE case_id = :case_id AND full_name = :full_name",
@@ -221,7 +188,8 @@ def seed() -> None:
             (CASE_ID,),
         )
         for other in OTHER_CASES:
-            _upsert_case(conn, other["case"], other["subjects"], other["evidence"])
+            _upsert_case(conn, other["case"])
+            _add_people_and_evidence(conn, other["case"]["id"], other["subjects"], other["evidence"])
 
 
 def precompute_routes() -> None:

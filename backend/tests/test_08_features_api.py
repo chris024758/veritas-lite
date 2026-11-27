@@ -5,12 +5,8 @@ import sys
 
 import requests
 
-from auth_test_helpers import sign_in
-
 sys.stdout.reconfigure(encoding="utf-8")
 API = "http://localhost:8018"
-client = requests.Session()
-sign_in(client, API)
 FAKE = "http://127.0.0.1:8019"
 CASE = "2026-PUN-0219"
 ALIBI = ("I was at my cousin's housewarming in Hadapsar. Left around 9, rode to the shop to check "
@@ -28,7 +24,7 @@ def check(label, condition, detail=""):
 
 
 def post(path, **kwargs):
-    return client.post(f"{API}{path}", timeout=120, **kwargs)
+    return requests.post(f"{API}{path}", timeout=120, **kwargs)
 
 
 session = post("/sessions/start", json={"case_id": CASE, "subject_name": "Suresh Deshmukh"}).json()["session_id"]
@@ -56,24 +52,24 @@ body = post(f"/sessions/{session}/statements", json={"text": "TRIGGER_ALIBI_400 
 check("failed alibi check still returns verdicts", body["claims"] and body["alibi_error"] and body["alibi_findings"] == [], body["alibi_error"][:60])
 
 # History and case-wide findings
-history = client.get(f"{API}/sessions/{session}").json()
+history = requests.get(f"{API}/sessions/{session}").json()
 check("history carries findings and follow-ups per turn",
       len(history["statements"][1]["alibi_findings"]) == 1 and history["statements"][0]["followups"])
-check("case findings list the one clash", len(client.get(f"{API}/cases/{CASE}/findings").json()) == 1)
+check("case findings list the one clash", len(requests.get(f"{API}/cases/{CASE}/findings").json()) == 1)
 
 # Timeline
-view = client.get(f"{API}/cases/{CASE}/timeline").json()
+view = requests.get(f"{API}/cases/{CASE}/timeline").json()
 check("timeline lanes: evidence, suspect", [l["role"] for l in view["lanes"]] == ["Evidence", "Suspect"])
 check("timeline has the incident window", view["incident"] == {"start": 1290, "end": 1350})
 route = next(e for e in view["events"] if e["text"].startswith("Rode from Hadapsar"))
 check("a journey is a range bar", (route["start"], route["end"], route["approx"]) == (1260, 1300, True))
 check("timeline links match findings", len(view["links"]) == 1)
 check("suspect has an alibi gap inside the window", any(g["lane"] == "s1" for g in view["gaps"]), view["gaps"])
-check("timeline unknown case 404", client.get(f"{API}/cases/NOPE/timeline").status_code == 404)
+check("timeline unknown case 404", requests.get(f"{API}/cases/NOPE/timeline").status_code == 404)
 
 # Report
 check("report before ending is 409", post(f"/sessions/{session}/report").status_code == 409)
-check("GET report before generating is 404", client.get(f"{API}/sessions/{session}/report").status_code == 404)
+check("GET report before generating is 404", requests.get(f"{API}/sessions/{session}/report").status_code == 404)
 r = post(f"/sessions/{session}/end")
 check("end interview sets ended_at", r.status_code == 200 and r.json()["ended_at"])
 check("statement after end is 409", post(f"/sessions/{session}/statements", json={"text": SHIFT}).status_code == 409)
@@ -82,7 +78,7 @@ report = r.json()
 check("report generated", r.status_code == 200 and report["summary"]["overview"].startswith("Scripted summary"), report["summary"]["overview"])
 check("report has findings, tally and turns", len(report["alibi_findings"]) == 1 and report["tally"]["FLAGGED"] >= 1 and len(report["statements"]) == 3)
 check("report leaves illustrative images out", all(e["tool"] != "generate_image" for s in report["statements"] for c in s["claims"] for e in c["evidence"]))
-check("GET report returns the stored one", client.get(f"{API}/sessions/{session}/report").json()["summary"] == report["summary"])
+check("GET report returns the stored one", requests.get(f"{API}/sessions/{session}/report").json()["summary"] == report["summary"])
 check("end unknown session 404", post("/sessions/999999/end").status_code == 404)
 
 # A failed summary still leaves a structured report
