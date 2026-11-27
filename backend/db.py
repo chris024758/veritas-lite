@@ -6,44 +6,18 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-from dotenv import load_dotenv
-
-load_dotenv(Path(__file__).parent / ".env")
 DB_PATH = Path(os.getenv("VERITAS_DB", Path(__file__).parent / "veritas.db"))
 
 VALID_STATUSES = {"PENDING", "CONSISTENT", "FLAGGED", "CONFLICT"}
 
 SCHEMA = """
-CREATE TABLE IF NOT EXISTS accounts (
-    username TEXT PRIMARY KEY,
-    password_hash TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS auth_sessions (
-    token_hash TEXT PRIMARY KEY,
-    username TEXT NOT NULL REFERENCES accounts(username) ON DELETE CASCADE,
-    expires_at INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS auth_sessions_expiry ON auth_sessions(expires_at);
-CREATE TABLE IF NOT EXISTS rate_limits (
-    scope TEXT NOT NULL,
-    client TEXT NOT NULL,
-    window INTEGER NOT NULL,
-    requests INTEGER NOT NULL,
-    PRIMARY KEY (scope, client)
-);
-CREATE INDEX IF NOT EXISTS rate_limits_window ON rate_limits(window);
-CREATE TABLE IF NOT EXISTS generated_images (
-    filename TEXT PRIMARY KEY,
-    username TEXT NOT NULL REFERENCES accounts(username) ON DELETE CASCADE
-);
 CREATE TABLE IF NOT EXISTS cases (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     location TEXT,
     summary TEXT,
     incident_start TEXT,
-    incident_end TEXT,
-    owner TEXT REFERENCES accounts(username)
+    incident_end TEXT
 );
 CREATE TABLE IF NOT EXISTS subjects (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -150,16 +124,8 @@ CREATE TABLE IF NOT EXISTS geo_cache (
 """
 
 
-class _Connection(sqlite3.Connection):
-    def __exit__(self, *exc_info):
-        try:
-            return super().__exit__(*exc_info)
-        finally:
-            self.close()
-
-
 def connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH, factory=_Connection)
+    conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
@@ -167,7 +133,6 @@ def connect() -> sqlite3.Connection:
 
 # Columns added after the first release, so an existing veritas.db gains them on startup.
 MIGRATIONS = [
-    ("cases", "owner", "TEXT REFERENCES accounts(username)"),
     ("cases", "incident_start", "TEXT"),
     ("cases", "incident_end", "TEXT"),
     ("sessions", "ended_at", "TEXT"),
@@ -223,7 +188,6 @@ SUBJECT_FIELDS = ("full_name", "role", "notes", "phone", "vehicle", "plate", "re
 def init_db() -> None:
     with connect() as conn:
         conn.executescript(SCHEMA)
-        conn.execute("BEGIN IMMEDIATE")
         for table, column, decl in MIGRATIONS:
             existing = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
             if column not in existing:
@@ -236,11 +200,6 @@ def _claim_row(row: sqlite3.Row) -> dict:
     claim["entities"] = json.loads(claim.pop("entities_json"))
     claim["details"] = json.loads(claim.pop("details_json"))
     return claim
-
-
-def owns_case(case_id: str, username: str) -> bool:
-    with connect() as conn:
-        return conn.execute("SELECT 1 FROM cases WHERE id = ? AND owner = ?", (case_id, username)).fetchone() is not None
 
 
 def get_case(case_id: str) -> dict | None:
@@ -263,7 +222,7 @@ def get_case(case_id: str) -> dict | None:
         ):
             items_by.setdefault(item["evidence_id"], []).append(item)
     return {
-        **{key: case[key] for key in case.keys() if key != "owner"},
+        **dict(case),
         "subjects": [dict(s) for s in subjects],
         "evidence": [
             {**{k: e[k] for k in ("id", "case_id", "evidence_type", "description", "image", "image_kind",
@@ -276,7 +235,7 @@ def get_case(case_id: str) -> dict | None:
     }
 
 
-def list_cases(owner: str | None = None) -> list[dict]:
+def list_cases() -> list[dict]:
     """The case directory: each case with people and interview counts and last activity."""
     with connect() as conn:
         rows = conn.execute(
@@ -285,7 +244,7 @@ def list_cases(owner: str | None = None) -> list[dict]:
                       (SELECT COUNT(*) FROM evidence e WHERE e.case_id = c.id) AS evidence,
                       (SELECT COUNT(*) FROM sessions se WHERE se.case_id = c.id) AS interviews,
                       (SELECT MAX(se.started_at) FROM sessions se WHERE se.case_id = c.id) AS last_activity
-               FROM cases c WHERE (? IS NULL OR c.owner = ?) ORDER BY c.id""", (owner, owner)
+               FROM cases c ORDER BY c.id"""
         ).fetchall()
     return [dict(r) for r in rows]
 
@@ -477,40 +436,6 @@ def _attachment_row(row: sqlite3.Row) -> dict:
     if extraction is not None:
         attachment["extraction"] = json.loads(extraction)
     return attachment
-
-
-def owns_upload(filename: str, username: str) -> bool:
-    with connect() as conn:
-        return conn.execute(
-            """SELECT 1 FROM attachments a JOIN sessions s ON s.id = a.session_id
-               JOIN cases c ON c.id = s.case_id WHERE a.filename = ? AND c.owner = ?""",
-            (filename, username),
-        ).fetchone() is not None
-
-
-def owns_generated_image(filename: str, username: str) -> bool:
-    with connect() as conn:
-        registered = conn.execute("SELECT username FROM generated_images WHERE filename = ?", (filename,)).fetchone()
-        if registered is not None:
-            return registered["username"] == username
-        # Before the image registry, case records and claim illustrations held the URLs.
-        url = f"/generated/{filename}"
-        return conn.execute(
-            """SELECT 1 FROM cases c JOIN evidence e ON c.id = e.case_id
-               WHERE c.owner = ? AND (e.illustration_preview = ? OR (e.image_kind = 'generated' AND e.image = ?))
-               UNION ALL
-               SELECT 1 FROM cases c JOIN sessions s ON s.case_id = c.id
-               JOIN statements st ON st.session_id = s.id JOIN claims cl ON cl.statement_id = st.id
-               JOIN claim_illustrations i ON i.claim_id = cl.id
-               WHERE c.owner = ? AND ? IN (i.image, i.illustration_preview)
-               UNION ALL
-               SELECT 1 FROM cases c JOIN sessions s ON s.case_id = c.id
-               JOIN statements st ON st.session_id = s.id JOIN claims cl ON cl.statement_id = st.id,
-               json_each(cl.details_json, '$.tool_calls') AS call
-               WHERE c.owner = ? AND json_extract(call.value, '$.name') = 'generate_image'
-               AND json_extract(call.value, '$.result.image_url') = ? LIMIT 1""",
-            (username, url, url, username, url, username, url),
-        ).fetchone() is not None
 
 
 def get_attachment(session_id: int, attachment_id: int) -> dict | None:

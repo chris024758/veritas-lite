@@ -1,20 +1,14 @@
-const defaultApiUrl = import.meta.env.DEV
-  ? `http://${window.location.hostname}:8018`
-  : window.location.origin;
-export const API_URL = (import.meta.env.VITE_API_URL || defaultApiUrl).replace(/\/+$/, "");
+export const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8018";
 
 async function request(path, options) {
   let response;
   try {
-    response = await fetch(`${API_URL}${path}`, { ...options, credentials: "include" });
+    response = await fetch(`${API_URL}${path}`, options);
   } catch {
     throw new Error(`Cannot reach the backend at ${API_URL}.`);
   }
   const body = await response.json().catch(() => null);
   if (!response.ok) {
-    if (response.status === 401 && !["/auth/login", "/auth/session"].includes(path)) {
-      window.dispatchEvent(new Event("veritas-session-expired"));
-    }
     const detail = typeof body?.detail === "string" ? body.detail : `HTTP ${response.status}`;
     throw new Error(detail);
   }
@@ -29,10 +23,6 @@ function sendJson(method, path, data) {
   });
 }
 const postJson = (path, data) => sendJson("POST", path, data);
-
-export const checkSession = () => request("/auth/session");
-export const login = (username, password) => postJson("/auth/login", { username, password });
-export const logout = () => request("/auth/logout", { method: "POST" });
 
 export const generateIllustration = (sessionId, target, id) =>
   request(`/sessions/${sessionId}/${target}/${id}/illustration`, { method: "POST" });
